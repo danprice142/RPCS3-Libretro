@@ -206,6 +206,7 @@ u32 AudioBackend::default_layout_channel_count(audio_channel_layout layout)
 {
 	switch (layout)
 	{
+	case audio_channel_layout::automatic: return 2; // Default to stereo for automatic
 	case audio_channel_layout::mono: return 1;
 	case audio_channel_layout::stereo: return 2;
 	case audio_channel_layout::stereo_lfe: return 3;

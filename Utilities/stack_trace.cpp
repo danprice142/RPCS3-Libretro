@@ -76,6 +76,56 @@ namespace utils
 		return result;
 	}
 
+	std::vector<void*> get_backtrace_from_context(const void* context_ptr, int max_depth)
+	{
+		std::vector<void*> result = {};
+
+		if (!context_ptr || max_depth <= 0)
+		{
+			return result;
+		}
+
+		const auto hProcess = ::GetCurrentProcess();
+		const auto hThread = ::GetCurrentThread();
+
+		CONTEXT context = *reinterpret_cast<const CONTEXT*>(context_ptr);
+
+		STACKFRAME64 stack = {};
+		stack.AddrPC.Mode = AddrModeFlat;
+		stack.AddrStack.Mode = AddrModeFlat;
+		stack.AddrFrame.Mode = AddrModeFlat;
+#if defined(ARCH_X64)
+		stack.AddrPC.Offset = context.Rip;
+		stack.AddrStack.Offset = context.Rsp;
+		stack.AddrFrame.Offset = context.Rbp;
+#elif defined(ARCH_ARM64)
+		stack.AddrPC.Offset = context.Pc;
+		stack.AddrStack.Offset = context.Sp;
+		stack.AddrFrame.Offset = context.Fp;
+#endif
+
+		while (max_depth--)
+		{
+			if (!StackWalk64(
+				IMAGE_FILE_MACHINE_AMD64,
+				hProcess,
+				hThread,
+				&stack,
+				&context,
+				NULL,
+				SymFunctionTableAccess64,
+				SymGetModuleBase64,
+				NULL))
+			{
+				break;
+			}
+
+			result.push_back(reinterpret_cast<void*>(stack.AddrPC.Offset));
+		}
+
+		return result;
+	}
+
 	std::vector<std::string> get_backtrace_symbols(const std::vector<void*>& stack)
 	{
 		std::vector<std::string> result = {};

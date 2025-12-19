@@ -27,9 +27,18 @@ extern "C"
 void gl::init()
 {
 #ifdef _WIN32
+    // Check if functions were already loaded (e.g., by libretro via its proc_address callback)
+    // If glGenTextures is already set, skip re-initialization to avoid wglGetProcAddress issues
+    // on threads without proper WGL context
+    if (glGenTextures != nullptr)
+    {
+        rsx_log.notice("OpenGL: Function pointers already loaded, skipping gl::init()");
+        return;
+    }
+
 #define OPENGL_PROC(p, n) OPENGL_PROC2(p, gl##n, gl##n)
 #define WGL_PROC(p, n) OPENGL_PROC2(p, wgl##n, wgl##n)
-#define OPENGL_PROC2(p, n, tn) /*if(!gl##n)*/ if(!(n = reinterpret_cast<p>(wglGetProcAddress(#tn)))) rsx_log.error("OpenGL: initialization of " #tn " failed.")
+#define OPENGL_PROC2(p, n, tn) if (!(n)) if(!(n = reinterpret_cast<p>(wglGetProcAddress(#tn)))) rsx_log.error("OpenGL: initialization of " #tn " failed.")
 #include "GLProcTable.h"
 #undef OPENGL_PROC
 #undef WGL_PROC

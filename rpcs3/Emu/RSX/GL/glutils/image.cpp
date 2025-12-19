@@ -4,6 +4,32 @@
 #include "state_tracker.hpp"
 #include "pixel_settings.hpp"
 
+#include <functional>
+#include <thread>
+
+#if defined(LIBRETRO_CORE)
+#ifndef RPCS3_LIBRETRO_GL_TEXTURE_TRACE
+#define RPCS3_LIBRETRO_GL_TEXTURE_TRACE 0
+#endif
+#else
+#define RPCS3_LIBRETRO_GL_TEXTURE_TRACE 0
+#endif
+
+static inline unsigned long long lrgl_tex_tid_hash()
+{
+	return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
+#if RPCS3_LIBRETRO_GL_TEXTURE_TRACE
+	#define LRGL_TEX_NOTICE(fmt, ...) rsx_log.notice("[LRGL_TEX][tid=%llx] " fmt, lrgl_tex_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_TEX_WARN(fmt, ...)   rsx_log.warning("[LRGL_TEX][tid=%llx] " fmt, lrgl_tex_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_TEX_ERR(fmt, ...)    rsx_log.error("[LRGL_TEX][tid=%llx] " fmt, lrgl_tex_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+#else
+	#define LRGL_TEX_NOTICE(...) do { } while (0)
+	#define LRGL_TEX_WARN(...)   do { } while (0)
+	#define LRGL_TEX_ERR(...)    do { } while (0)
+#endif
+
 namespace gl
 {
 	static GLenum sizedfmt_to_ifmt(GLenum sized)
@@ -21,6 +47,41 @@ namespace gl
 
 	texture::texture(GLenum target, GLuint width, GLuint height, GLuint depth, GLuint mipmaps, GLubyte samples, GLenum sized_format, rsx::format_class format_class)
 	{
+		LRGL_TEX_NOTICE("ctor enter target=0x%X w=%u h=%u d=%u mips=%u samples=%u fmt=0x%X fmt_class=%u",
+			target, width, height, depth, mipmaps, samples, sized_format, static_cast<u32>(format_class));
+
+		auto lr_check_glerr = [&](const char* stage)
+		{
+			const GLenum err = glGetError();
+			if (err != GL_NO_ERROR)
+			{
+				LRGL_TEX_ERR("glGetError stage=%s err=0x%X (target=0x%X w=%u h=%u d=%u mips=%u samples=%u fmt=0x%X)",
+					stage, static_cast<u32>(err), target, width, height, depth, mipmaps, samples, sized_format);
+			}
+		};
+
+		lr_check_glerr("pre");
+
+		// Guard against invalid dimensions for non-buffer textures
+		// GL_TEXTURE_BUFFER textures don't have traditional dimensions
+		if (target != GL_TEXTURE_BUFFER)
+		{
+			if (width == 0 || height == 0 || depth == 0 || mipmaps == 0 || samples == 0)
+			{
+				LRGL_TEX_ERR("Invalid dimensions requested w=%u h=%u d=%u mips=%u samples=%u target=0x%X. Using minimum valid dimensions.",
+					width, height, depth, mipmaps, samples, target);
+				// Use minimum valid dimensions
+				if (width == 0) width = 1;
+				if (height == 0) height = 1;
+				if (depth == 0) depth = 1;
+				if (mipmaps == 0) mipmaps = 1;
+				if (samples == 0) samples = 1;
+			}
+		}
+
+		LRGL_TEX_NOTICE("ctor sanitized target=0x%X w=%u h=%u d=%u mips=%u samples=%u fmt=0x%X",
+			target, width, height, depth, mipmaps, samples, sized_format);
+
 		// Upgrade targets for MSAA
 		if (samples > 1)
 		{
@@ -37,10 +98,16 @@ namespace gl
 			}
 		}
 
+		LRGL_TEX_NOTICE("ctor after msaa remap target=0x%X w=%u h=%u d=%u mips=%u samples=%u fmt=0x%X",
+			target, width, height, depth, mipmaps, samples, sized_format);
+
 		glGenTextures(1, &m_id);
+		LRGL_TEX_NOTICE("glGenTextures id=%u", m_id);
+		lr_check_glerr("glGenTextures");
 
 		// Must bind to initialize the new texture
 		gl::get_command_context()->bind_texture(GL_TEMP_IMAGE_SLOT(0), target, m_id, GL_TRUE);
+		lr_check_glerr("bind_texture");
 
 		const GLenum storage_fmt = sizedfmt_to_ifmt(sized_format);
 		switch (target)
@@ -50,24 +117,29 @@ namespace gl
 		case GL_TEXTURE_1D:
 			glTexStorage1D(target, mipmaps, storage_fmt, width);
 			height = depth = 1;
+			lr_check_glerr("glTexStorage1D");
 			break;
 		case GL_TEXTURE_2D:
 		case GL_TEXTURE_CUBE_MAP:
 			glTexStorage2D(target, mipmaps, storage_fmt, width, height);
 			depth = 1;
+			lr_check_glerr("glTexStorage2D");
 			break;
 		case GL_TEXTURE_2D_MULTISAMPLE:
 			ensure(mipmaps == 1);
 			glTexStorage2DMultisample(target, samples, storage_fmt, width, height, GL_TRUE);
 			depth = 1;
+			lr_check_glerr("glTexStorage2DMultisample");
 			break;
 		case GL_TEXTURE_3D:
 		case GL_TEXTURE_2D_ARRAY:
 			glTexStorage3D(target, mipmaps, storage_fmt, width, height, depth);
+			lr_check_glerr("glTexStorage3D");
 			break;
 		case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
 			ensure(mipmaps == 1);
 			glTexStorage3DMultisample(target, samples, storage_fmt, width, height, depth, GL_TRUE);
+			lr_check_glerr("glTexStorage3DMultisample");
 			break;
 		case GL_TEXTURE_BUFFER:
 			break;
@@ -84,6 +156,7 @@ namespace gl
 				glTexParameteri(target, GL_TEXTURE_WRAP_R, GL_REPEAT);
 				glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, 0);
 				glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, mipmaps - 1);
+				lr_check_glerr("glTexParameteri");
 			}
 
 			m_width = width;
@@ -166,6 +239,19 @@ namespace gl
 		m_internal_format = static_cast<internal_format>(sized_format);
 		m_component_layout = { GL_ALPHA, GL_RED, GL_GREEN, GL_BLUE };
 		m_format_class = format_class;
+		lr_check_glerr("ctor_exit");
+		LRGL_TEX_NOTICE("ctor exit id=%u target=0x%X storage_fmt=0x%X sized_fmt=0x%X size=%ux%u d=%u mips=%u samples=%u pitch=%u aspect=0x%x",
+			m_id,
+			static_cast<u32>(target),
+			static_cast<u32>(storage_fmt),
+			static_cast<u32>(sized_format),
+			m_width,
+			m_height,
+			m_depth,
+			m_mipmaps,
+			m_samples,
+			m_pitch,
+			static_cast<u32>(m_aspect_flags));
 	}
 
 	texture::~texture()

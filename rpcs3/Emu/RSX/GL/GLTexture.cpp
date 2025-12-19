@@ -11,6 +11,32 @@
 
 #include "util/asm.hpp"
 
+#include <functional>
+#include <thread>
+
+#if defined(LIBRETRO_CORE)
+#ifndef RPCS3_LIBRETRO_GL_TEXTURE_TRACE
+#define RPCS3_LIBRETRO_GL_TEXTURE_TRACE 0
+#endif
+#else
+#define RPCS3_LIBRETRO_GL_TEXTURE_TRACE 0
+#endif
+
+static inline unsigned long long lrgl_texcpp_tid_hash()
+{
+	return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
+#if RPCS3_LIBRETRO_GL_TEXTURE_TRACE
+	#define LRGL_TEXCPP_NOTICE(fmt, ...) rsx_log.notice("[LRGL_TEXCPP][tid=%llx] " fmt, lrgl_texcpp_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_TEXCPP_WARN(fmt, ...)   rsx_log.warning("[LRGL_TEXCPP][tid=%llx] " fmt, lrgl_texcpp_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_TEXCPP_ERR(fmt, ...)    rsx_log.error("[LRGL_TEXCPP][tid=%llx] " fmt, lrgl_texcpp_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+#else
+	#define LRGL_TEXCPP_NOTICE(...) do { } while (0)
+	#define LRGL_TEXCPP_WARN(...)   do { } while (0)
+	#define LRGL_TEXCPP_ERR(...)    do { } while (0)
+#endif
+
 namespace gl
 {
 	namespace debug
@@ -581,11 +607,26 @@ namespace gl
 	gl::viewable_image* create_texture(u32 gcm_format, u16 width, u16 height, u16 depth, u16 mipmaps,
 			rsx::texture_dimension_extended type)
 	{
+		LRGL_TEXCPP_NOTICE("create_texture enter gcm_format=0x%x w=%u h=%u d=%u mips=%u type=%u",
+			gcm_format, static_cast<u32>(width), static_cast<u32>(height), static_cast<u32>(depth), static_cast<u32>(mipmaps), static_cast<u32>(type));
+
+		if (width == 0 || height == 0 || depth == 0 || mipmaps == 0)
+		{
+			LRGL_TEXCPP_ERR("create_texture INVALID DIMENSIONS gcm_format=0x%x w=%u h=%u d=%u mips=%u type=%u",
+				gcm_format, static_cast<u32>(width), static_cast<u32>(height), static_cast<u32>(depth), static_cast<u32>(mipmaps), static_cast<u32>(type));
+		}
+
 		const GLenum target = get_target(type);
 		const GLenum internal_format = get_sized_internal_format(gcm_format);
 		const auto format_class = rsx::classify_format(gcm_format);
 
-		return new gl::viewable_image(target, width, height, depth, mipmaps, 1, internal_format, format_class);
+		LRGL_TEXCPP_NOTICE("create_texture target=0x%x internal_format=0x%x format_class=%u",
+			static_cast<u32>(target), static_cast<u32>(internal_format), static_cast<u32>(format_class));
+
+		auto* result = new gl::viewable_image(target, width, height, depth, mipmaps, 1, internal_format, format_class);
+
+		LRGL_TEXCPP_NOTICE("create_texture exit result=%p id=%u", result, result ? result->id() : 0u);
+		return result;
 	}
 
 	void fill_texture(gl::command_context& cmd, texture* dst, int format,

@@ -7,6 +7,32 @@
 #include "GLResolveHelper.h"
 
 #include "Emu/Memory/vm_locking.h"
+
+#include <functional>
+#include <thread>
+
+#if defined(LIBRETRO_CORE)
+#ifndef RPCS3_LIBRETRO_GLGS_TRACE
+#define RPCS3_LIBRETRO_GLGS_TRACE 0
+#endif
+#else
+#define RPCS3_LIBRETRO_GLGS_TRACE 0
+#endif
+
+static inline unsigned long long lrgl_glgs_tid_hash()
+{
+	return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
+#if RPCS3_LIBRETRO_GLGS_TRACE
+	#define LRGL_GLGS_NOTICE(fmt, ...) rsx_log.notice("[LRGL_GLGS][tid=%llx] " fmt, lrgl_glgs_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_GLGS_WARN(fmt, ...)   rsx_log.warning("[LRGL_GLGS][tid=%llx] " fmt, lrgl_glgs_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_GLGS_ERR(fmt, ...)    rsx_log.error("[LRGL_GLGS][tid=%llx] " fmt, lrgl_glgs_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+#else
+	#define LRGL_GLGS_NOTICE(...) do { } while (0)
+	#define LRGL_GLGS_WARN(...)   do { } while (0)
+	#define LRGL_GLGS_ERR(...)    do { } while (0)
+#endif
 #include "Emu/RSX/rsx_methods.h"
 #include "Emu/RSX/Host/MM.h"
 #include "Emu/RSX/Host/RSXDMAWriter.h"
@@ -92,11 +118,15 @@ void GLGSRender::set_scissor(bool clip_viewport)
 
 void GLGSRender::on_init_thread()
 {
+	LRGL_GLGS_NOTICE("on_init_thread ENTER");
 	ensure(m_frame);
+	LRGL_GLGS_NOTICE("on_init_thread m_frame=%p", m_frame);
 
 	// NOTES: All contexts have to be created before any is bound to a thread
 	// This allows context sharing to work (both GLRCs passed to wglShareLists have to be idle or you get ERROR_BUSY)
+	LRGL_GLGS_NOTICE("on_init_thread calling make_context");
 	m_context = m_frame->make_context();
+	LRGL_GLGS_NOTICE("on_init_thread make_context returned ctx=%p", m_context);
 
 	const auto shadermode = g_cfg.video.shadermode.get();
 	if (shadermode != shader_mode::recompiler)
@@ -129,14 +159,21 @@ void GLGSRender::on_init_thread()
 	}
 
 	// Bind primary context to main RSX thread
+	LRGL_GLGS_NOTICE("on_init_thread calling set_current ctx=%p", m_context);
 	m_frame->set_current(m_context);
+	LRGL_GLGS_NOTICE("on_init_thread set_current done");
 	gl::set_primary_context_thread();
+	LRGL_GLGS_NOTICE("on_init_thread set_primary_context_thread done");
 
 	zcull_ctrl.reset(static_cast<::rsx::reports::ZCULL_control*>(this));
 	m_occlusion_type = g_cfg.video.precise_zpass_count ? GL_SAMPLES_PASSED : GL_ANY_SAMPLES_PASSED;
+	LRGL_GLGS_NOTICE("on_init_thread zcull_ctrl reset done");
 
+	LRGL_GLGS_NOTICE("on_init_thread calling gl::init");
 	gl::init();
+	LRGL_GLGS_NOTICE("on_init_thread gl::init done");
 	gl::set_command_context(gl_state);
+	LRGL_GLGS_NOTICE("on_init_thread set_command_context done");
 
 	// Enable adaptive vsync if vsync is requested
 	gl::set_swapinterval(g_cfg.video.vsync ? -1 : 0);
@@ -144,9 +181,11 @@ void GLGSRender::on_init_thread()
 	if (g_cfg.video.debug_output)
 		gl::enable_debugging();
 
+	LRGL_GLGS_NOTICE("on_init_thread querying GL strings");
 	rsx_log.success("GL RENDERER: %s (%s)", reinterpret_cast<const char*>(glGetString(GL_RENDERER)), reinterpret_cast<const char*>(glGetString(GL_VENDOR)));
 	rsx_log.success("GL VERSION: %s", reinterpret_cast<const char*>(glGetString(GL_VERSION)));
 	rsx_log.success("GLSL VERSION: %s", reinterpret_cast<const char*>(glGetString(GL_SHADING_LANGUAGE_VERSION)));
+	LRGL_GLGS_NOTICE("on_init_thread GL strings done");
 
 	const auto& gl_caps = gl::get_driver_caps();
 
@@ -217,11 +256,14 @@ void GLGSRender::on_init_thread()
 	m_min_texbuffer_alignment = 256;
 	m_max_texbuffer_size = 0;
 
+	LRGL_GLGS_NOTICE("on_init_thread enabling GL_VERTEX_PROGRAM_POINT_SIZE");
 	glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
 	glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &m_uniform_buffer_offset_align);
 	glGetIntegerv(GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT, &m_min_texbuffer_alignment);
 	glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &m_max_texbuffer_size);
+	LRGL_GLGS_NOTICE("on_init_thread creating VAO");
 	m_vao.create();
+	LRGL_GLGS_NOTICE("on_init_thread VAO created");
 
 	// Set min alignment to 16-bytes for SSE optimizations with aligned addresses to work
 	m_min_texbuffer_alignment = std::max(m_min_texbuffer_alignment, 16);
@@ -235,41 +277,55 @@ void GLGSRender::on_init_thread()
 	}
 
 	// Array stream buffer
+	LRGL_GLGS_NOTICE("on_init_thread creating persistent stream buffer (GL_TEXTURE_BUFFER)");
 	{
 		m_gl_persistent_stream_buffer = std::make_unique<gl::texture>(GL_TEXTURE_BUFFER, 0, 0, 0, 0, 0, GL_R8UI, RSX_FORMAT_CLASS_DONT_CARE);
+		LRGL_GLGS_NOTICE("on_init_thread persistent stream buffer created id=%u", m_gl_persistent_stream_buffer->id());
 		gl_state.bind_texture(GL_STREAM_BUFFER_START + 0, GL_TEXTURE_BUFFER, m_gl_persistent_stream_buffer->id());
 	}
 
 	// Register stream buffer
+	LRGL_GLGS_NOTICE("on_init_thread creating volatile stream buffer (GL_TEXTURE_BUFFER)");
 	{
 		m_gl_volatile_stream_buffer = std::make_unique<gl::texture>(GL_TEXTURE_BUFFER, 0, 0, 0, 0, 0, GL_R8UI, RSX_FORMAT_CLASS_DONT_CARE);
+		LRGL_GLGS_NOTICE("on_init_thread volatile stream buffer created id=%u", m_gl_volatile_stream_buffer->id());
 		gl_state.bind_texture(GL_STREAM_BUFFER_START + 1, GL_TEXTURE_BUFFER, m_gl_volatile_stream_buffer->id());
 	}
 
 	// Fallback null texture instead of relying on texture0
+	LRGL_GLGS_NOTICE("on_init_thread creating null textures");
 	{
 		std::array<u32, 8> pixeldata = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
 		// 1D
+		LRGL_GLGS_NOTICE("on_init_thread creating null tex1D");
 		auto tex1D = std::make_unique<gl::texture>(GL_TEXTURE_1D, 1, 1, 1, 1, 1, GL_RGBA8, RSX_FORMAT_CLASS_COLOR);
+		LRGL_GLGS_NOTICE("on_init_thread null tex1D created id=%u", tex1D->id());
 		tex1D->copy_from(pixeldata.data(), gl::texture::format::rgba, gl::texture::type::uint_8_8_8_8, {});
 
 		// 2D
+		LRGL_GLGS_NOTICE("on_init_thread creating null tex2D");
 		auto tex2D = std::make_unique<gl::texture>(GL_TEXTURE_2D, 1, 1, 1, 1, 1, GL_RGBA8, RSX_FORMAT_CLASS_COLOR);
+		LRGL_GLGS_NOTICE("on_init_thread null tex2D created id=%u", tex2D->id());
 		tex2D->copy_from(pixeldata.data(), gl::texture::format::rgba, gl::texture::type::uint_8_8_8_8, {});
 
 		// 3D
+		LRGL_GLGS_NOTICE("on_init_thread creating null tex3D");
 		auto tex3D = std::make_unique<gl::texture>(GL_TEXTURE_3D, 1, 1, 1, 1, 1, GL_RGBA8, RSX_FORMAT_CLASS_COLOR);
+		LRGL_GLGS_NOTICE("on_init_thread null tex3D created id=%u", tex3D->id());
 		tex3D->copy_from(pixeldata.data(), gl::texture::format::rgba, gl::texture::type::uint_8_8_8_8, {});
 
 		// CUBE
+		LRGL_GLGS_NOTICE("on_init_thread creating null texCUBE");
 		auto texCUBE = std::make_unique<gl::texture>(GL_TEXTURE_CUBE_MAP, 1, 1, 1, 1, 1, GL_RGBA8, RSX_FORMAT_CLASS_COLOR);
+		LRGL_GLGS_NOTICE("on_init_thread null texCUBE created id=%u", texCUBE->id());
 		texCUBE->copy_from(pixeldata.data(), gl::texture::format::rgba, gl::texture::type::uint_8_8_8_8, {});
 
 		m_null_textures[GL_TEXTURE_1D] = std::move(tex1D);
 		m_null_textures[GL_TEXTURE_2D] = std::move(tex2D);
 		m_null_textures[GL_TEXTURE_3D] = std::move(tex3D);
 		m_null_textures[GL_TEXTURE_CUBE_MAP] = std::move(texCUBE);
+		LRGL_GLGS_NOTICE("on_init_thread null textures done");
 	}
 
 	if (!gl_caps.ARB_buffer_storage_supported)
@@ -315,8 +371,11 @@ void GLGSRender::on_init_thread()
 		m_instancing_ring_buffer = std::make_unique<gl::ring_buffer>();
 	}
 
+	LRGL_GLGS_NOTICE("on_init_thread creating ring buffers");
 	m_attrib_ring_buffer->create(gl::buffer::target::texture, 256 * 0x100000);
+	LRGL_GLGS_NOTICE("on_init_thread attrib_ring_buffer created");
 	m_index_ring_buffer->create(gl::buffer::target::element_array, 16 * 0x100000);
+	LRGL_GLGS_NOTICE("on_init_thread index_ring_buffer created");
 	m_transform_constants_buffer->create(gl::buffer::target::uniform, 64 * 0x100000);
 	m_fragment_constants_buffer->create(gl::buffer::target::uniform, 16 * 0x100000);
 	m_fragment_env_buffer->create(gl::buffer::target::uniform, 16 * 0x100000);
@@ -326,6 +385,7 @@ void GLGSRender::on_init_thread()
 	m_raster_env_ring_buffer->create(gl::buffer::target::uniform, 16 * 0x100000);
 	m_scratch_ring_buffer->create(gl::buffer::target::uniform, 16 * 0x100000);
 	m_instancing_ring_buffer->create(gl::buffer::target::ssbo, 128 * 0x100000);
+	LRGL_GLGS_NOTICE("on_init_thread all ring buffers created");
 
 	if (shadermode == shader_mode::async_with_interpreter || shadermode == shader_mode::interpreter_only)
 	{
@@ -354,25 +414,30 @@ void GLGSRender::on_init_thread()
 		backend_config.supports_hw_renormalization = true;
 	}
 
+	LRGL_GLGS_NOTICE("on_init_thread updating stream views");
 	m_persistent_stream_view.update(m_attrib_ring_buffer.get(), 0, std::min<u32>(static_cast<u32>(m_attrib_ring_buffer->size()), m_max_texbuffer_size));
 	m_volatile_stream_view.update(m_attrib_ring_buffer.get(), 0, std::min<u32>(static_cast<u32>(m_attrib_ring_buffer->size()), m_max_texbuffer_size));
 	m_gl_persistent_stream_buffer->copy_from(m_persistent_stream_view);
 	m_gl_volatile_stream_buffer->copy_from(m_volatile_stream_view);
+	LRGL_GLGS_NOTICE("on_init_thread stream views done");
 
 	m_vao.element_array_buffer = *m_index_ring_buffer;
 
+	LRGL_GLGS_NOTICE("on_init_thread creating samplers");
 	int image_unit = 0;
 	for (auto &sampler : m_fs_sampler_states)
 	{
 		sampler.create();
 		sampler.bind(image_unit++);
 	}
+	LRGL_GLGS_NOTICE("on_init_thread fs_sampler_states done");
 
 	for (auto &sampler : m_vs_sampler_states)
 	{
 		sampler.create();
 		sampler.bind(image_unit++);
 	}
+	LRGL_GLGS_NOTICE("on_init_thread vs_sampler_states done");
 
 	for (auto& sampler : m_fs_sampler_mirror_states)
 	{
@@ -380,8 +445,10 @@ void GLGSRender::on_init_thread()
 		sampler.apply_defaults();
 		sampler.bind(image_unit++);
 	}
+	LRGL_GLGS_NOTICE("on_init_thread fs_sampler_mirror_states done");
 
 	//Occlusion query
+	LRGL_GLGS_NOTICE("on_init_thread creating occlusion queries");
 	for (u32 i = 0; i < rsx::reports::occlusion_query_count; ++i)
 	{
 		GLuint handle = 0;
@@ -393,12 +460,26 @@ void GLGSRender::on_init_thread()
 		query.active = false;
 		query.result = 0;
 	}
+	LRGL_GLGS_NOTICE("on_init_thread occlusion queries done");
 
-	m_ui_renderer.create();
+	// Only create UI renderer if native UI is enabled (overlay manager exists)
+	// This avoids loading icon resources that may not exist in libretro mode
+	LRGL_GLGS_NOTICE("on_init_thread m_overlay_manager=%p", m_overlay_manager);
+	if (m_overlay_manager)
+	{
+		LRGL_GLGS_NOTICE("on_init_thread creating m_ui_renderer");
+		m_ui_renderer.create();
+		LRGL_GLGS_NOTICE("on_init_thread m_ui_renderer created");
+	}
+	LRGL_GLGS_NOTICE("on_init_thread creating m_video_output_pass");
 	m_video_output_pass.create();
+	LRGL_GLGS_NOTICE("on_init_thread m_video_output_pass created");
 
+	LRGL_GLGS_NOTICE("on_init_thread initializing texture cache");
 	m_gl_texture_cache.initialize();
+	LRGL_GLGS_NOTICE("on_init_thread texture cache initialized");
 
+	LRGL_GLGS_NOTICE("on_init_thread initializing prog_buffer");
 	m_prog_buffer.initialize
 	(
 		[this](void* const& props, const RSXVertexProgram& vp, const RSXFragmentProgram& fp)
@@ -407,19 +488,26 @@ void GLGSRender::on_init_thread()
 			m_shaders_cache->store(props, vp, fp);
 		}
 	);
+	LRGL_GLGS_NOTICE("on_init_thread prog_buffer initialized");
 
+	LRGL_GLGS_NOTICE("on_init_thread loading shader cache m_overlay_manager=%p", m_overlay_manager);
 	if (!m_overlay_manager)
 	{
 		m_frame->hide();
+		LRGL_GLGS_NOTICE("on_init_thread loading shaders_cache (no overlay)");
 		m_shaders_cache->load(nullptr);
+		LRGL_GLGS_NOTICE("on_init_thread shaders_cache loaded");
 		m_frame->show();
 	}
 	else
 	{
 		rsx::shader_loading_dialog_native dlg(this);
 
+		LRGL_GLGS_NOTICE("on_init_thread loading shaders_cache (with overlay dlg)");
 		m_shaders_cache->load(&dlg);
+		LRGL_GLGS_NOTICE("on_init_thread shaders_cache loaded");
 	}
+	LRGL_GLGS_NOTICE("on_init_thread EXIT SUCCESS");
 }
 
 

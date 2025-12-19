@@ -9,6 +9,31 @@
 
 #include <memory>
 #include <vector>
+#include <functional>
+#include <thread>
+
+#if defined(LIBRETRO_CORE)
+#ifndef RPCS3_LIBRETRO_GL_TEXCACHE_TRACE
+#define RPCS3_LIBRETRO_GL_TEXCACHE_TRACE 0
+#endif
+#else
+#define RPCS3_LIBRETRO_GL_TEXCACHE_TRACE 0
+#endif
+
+static inline unsigned long long lrgl_texcache_tid_hash()
+{
+	return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
+#if RPCS3_LIBRETRO_GL_TEXCACHE_TRACE
+	#define LRGL_TEXCACHE_NOTICE(fmt, ...) rsx_log.notice("[LRGL_TEXCACHE][tid=%llx] " fmt, lrgl_texcache_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_TEXCACHE_WARN(fmt, ...)   rsx_log.warning("[LRGL_TEXCACHE][tid=%llx] " fmt, lrgl_texcache_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_TEXCACHE_ERR(fmt, ...)    rsx_log.error("[LRGL_TEXCACHE][tid=%llx] " fmt, lrgl_texcache_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+#else
+	#define LRGL_TEXCACHE_NOTICE(...) do { } while (0)
+	#define LRGL_TEXCACHE_WARN(...)   do { } while (0)
+	#define LRGL_TEXCACHE_ERR(...)    do { } while (0)
+#endif
 
 class GLGSRender;
 
@@ -603,6 +628,15 @@ namespace gl
 		cached_texture_section* create_new_texture(gl::command_context& cmd, const utils::address_range32 &rsx_range, u16 width, u16 height, u16 depth, u16 mipmaps, u32 pitch,
 			u32 gcm_format, rsx::texture_upload_context context, rsx::texture_dimension_extended type, bool swizzled, rsx::component_order swizzle_flags, rsx::flags32_t /*flags*/) override
 		{
+			LRGL_TEXCACHE_NOTICE("create_new_texture enter rsx_range=[0x%x,len=%u] w=%u h=%u d=%u mips=%u pitch=%u gcm_fmt=0x%x ctx=%u type=%u",
+				rsx_range.start, rsx_range.length(), static_cast<u32>(width), static_cast<u32>(height), static_cast<u32>(depth), static_cast<u32>(mipmaps), pitch, gcm_format, static_cast<u32>(context), static_cast<u32>(type));
+
+			if (width == 0 || height == 0 || depth == 0 || mipmaps == 0)
+			{
+				LRGL_TEXCACHE_ERR("create_new_texture INVALID DIMENSIONS w=%u h=%u d=%u mips=%u",
+					static_cast<u32>(width), static_cast<u32>(height), static_cast<u32>(depth), static_cast<u32>(mipmaps));
+			}
+
 			const rsx::image_section_attributes_t search_desc = { .gcm_format = gcm_format, .width = width, .height = height, .depth = depth, .mipmaps = mipmaps };
 			const bool allow_dirty = (context != rsx::texture_upload_context::framebuffer_storage);
 			auto& cached = *find_cached_texture(rsx_range, search_desc, true, true, allow_dirty);
@@ -643,8 +677,12 @@ namespace gl
 
 			if (!image)
 			{
+				LRGL_TEXCACHE_NOTICE("create_new_texture allocating new texture w=%u h=%u d=%u mips=%u gcm_fmt=0x%x",
+					static_cast<u32>(width), static_cast<u32>(height), static_cast<u32>(depth), static_cast<u32>(mipmaps), gcm_format);
 				ensure(!cached.exists());
 				image = gl::create_texture(gcm_format, width, height, depth, mipmaps, type);
+
+				LRGL_TEXCACHE_NOTICE("create_new_texture allocated image=%p id=%u", image, image ? image->id() : 0u);
 
 				// Prepare section
 				cached.reset(rsx_range);

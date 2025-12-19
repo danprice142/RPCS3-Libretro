@@ -37,6 +37,15 @@ if(HAS_MEMORY_BREAKPOINTS)
     target_compile_definitions(rpcs3_emu PRIVATE RPCS3_HAS_MEMORY_BREAKPOINTS)
 endif()
 
+# Libretro core build - propagate define to emu library
+if(BUILD_LIBRETRO_CORE OR BUILD_LIBRETRO_CORE_ONLY)
+    target_compile_definitions(rpcs3_emu PUBLIC LIBRETRO_CORE)
+    # Enable standard-conforming preprocessor for __VA_OPT__ support in libretro logging macros
+    if(MSVC)
+        target_compile_options(rpcs3_emu PRIVATE /Zc:preprocessor)
+    endif()
+endif()
+
 # For stdafx.h
 target_include_directories(rpcs3_emu
     PUBLIC

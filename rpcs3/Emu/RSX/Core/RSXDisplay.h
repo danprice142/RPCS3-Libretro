@@ -84,12 +84,32 @@ namespace rsx
 		inline void push(u32 _buffer)
 		{
 			buffer_queue.push_back(_buffer);
+#if defined(LIBRETRO_CORE)
+			static thread_local u64 tl_push_count = 0;
+			tl_push_count++;
+			const bool log_this = (tl_push_count <= 120ull) || ((tl_push_count % 60ull) == 0ull);
+			if (log_this)
+			{
+				rsx_log.notice("[LRFLIP] push buffer=%u queue_size=%zu count=%llu", _buffer, buffer_queue.size(), static_cast<unsigned long long>(tl_push_count));
+			}
+#endif
 		}
 
 		inline bool pop(u32 _buffer)
 		{
+#if defined(LIBRETRO_CORE)
+			static thread_local u64 tl_pop_count = 0;
+			tl_pop_count++;
+			const bool log_this = (tl_pop_count <= 120ull) || ((tl_pop_count % 60ull) == 0ull);
+#endif
 			if (buffer_queue.empty())
 			{
+#if defined(LIBRETRO_CORE)
+				if (log_this)
+				{
+					rsx_log.warning("[LRFLIP] pop buffer=%u FAILED: queue_empty count=%llu", _buffer, static_cast<unsigned long long>(tl_pop_count));
+				}
+#endif
 				return false;
 			}
 
@@ -101,6 +121,12 @@ namespace rsx
 				if (index == _buffer)
 				{
 					buffer = _buffer;
+#if defined(LIBRETRO_CORE)
+					if (log_this)
+					{
+						rsx_log.notice("[LRFLIP] pop buffer=%u SUCCESS queue_size_after=%zu count=%llu", _buffer, buffer_queue.size(), static_cast<unsigned long long>(tl_pop_count));
+					}
+#endif
 					return true;
 				}
 			} while (!buffer_queue.empty());

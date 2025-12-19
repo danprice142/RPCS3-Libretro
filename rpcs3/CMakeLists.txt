@@ -23,7 +23,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     endif()
 endif()
 
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT BUILD_LIBRETRO_CORE_ONLY)
     # Qt
     # finds Qt libraries and setups custom commands for MOC and UIC
     # Must be done here because generated MOC and UIC targets cant
@@ -34,13 +34,13 @@ endif()
 # subdirectories
 add_subdirectory(Emu)
 
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT BUILD_LIBRETRO_CORE_ONLY)
     add_subdirectory(rpcs3qt)
 endif()
 
 gen_git_version(${CMAKE_CURRENT_SOURCE_DIR})
 
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT BUILD_LIBRETRO_CORE_ONLY)
     # Build rpcs3_lib
     add_library(rpcs3_lib STATIC)
 
@@ -174,6 +174,13 @@ if (NOT ANDROID)
         install(DIRECTORY ../bin/test
             DESTINATION ${CMAKE_INSTALL_DATADIR}/rpcs3)
     endif()
+endif()
+
+# Libretro core (optional)
+option(BUILD_LIBRETRO_CORE "Build RPCS3 as a libretro core" OFF)
+option(BUILD_LIBRETRO_CORE_ONLY "Build only the libretro core (skip Qt GUI)" OFF)
+if(BUILD_LIBRETRO_CORE OR BUILD_LIBRETRO_CORE_ONLY)
+    add_subdirectory(libretro)
 endif()
 
 # Unit tests

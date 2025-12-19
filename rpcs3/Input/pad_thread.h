@@ -41,8 +41,9 @@ public:
 
 	static auto constexpr thread_name = "Pad Thread"sv;
 
-protected:
 	void Init();
+
+protected:
 	void InitLddPad(u32 handle, const u32* port_status);
 
 	// List of all handlers
@@ -58,8 +59,10 @@ protected:
 
 	u32 num_ldd_pad = 0;
 
-private:
+public:
 	void apply_copilots();
+
+private:
 	void update_pad_states();
 
 	u32 m_mask_start_press_to_resume = 0;

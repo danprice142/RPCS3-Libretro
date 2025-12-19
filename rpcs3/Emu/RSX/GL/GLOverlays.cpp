@@ -4,6 +4,32 @@
 #include "../Program/RSXOverlay.h"
 #include "Emu/Cell/timers.hpp"
 
+#include <functional>
+#include <thread>
+
+#if defined(LIBRETRO_CORE)
+#ifndef RPCS3_LIBRETRO_GL_OVERLAY_TRACE
+#define RPCS3_LIBRETRO_GL_OVERLAY_TRACE 0
+#endif
+#else
+#define RPCS3_LIBRETRO_GL_OVERLAY_TRACE 0
+#endif
+
+static inline unsigned long long lrgl_overlay_tid_hash()
+{
+	return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+}
+
+#if RPCS3_LIBRETRO_GL_OVERLAY_TRACE
+	#define LRGL_OVERLAY_NOTICE(fmt, ...) rsx_log.notice("[LRGL_OVERLAY][tid=%llx] " fmt, lrgl_overlay_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_OVERLAY_WARN(fmt, ...)   rsx_log.warning("[LRGL_OVERLAY][tid=%llx] " fmt, lrgl_overlay_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+	#define LRGL_OVERLAY_ERR(fmt, ...)    rsx_log.error("[LRGL_OVERLAY][tid=%llx] " fmt, lrgl_overlay_tid_hash() __VA_OPT__(,) __VA_ARGS__)
+#else
+	#define LRGL_OVERLAY_NOTICE(...) do { } while (0)
+	#define LRGL_OVERLAY_WARN(...)   do { } while (0)
+	#define LRGL_OVERLAY_ERR(...)    do { } while (0)
+#endif
+
 namespace gl
 {
 	// Lame
@@ -222,7 +248,18 @@ namespace gl
 
 	gl::texture_view* ui_overlay_renderer::load_simple_image(rsx::overlays::image_info_base* desc, bool temp_resource, u32 owner_uid)
 	{
+		LRGL_OVERLAY_NOTICE("load_simple_image enter desc=%p w=%u h=%u temp=%d owner=%u",
+			desc, desc ? desc->w : 0u, desc ? desc->h : 0u, temp_resource ? 1 : 0, owner_uid);
+
+		if (!desc || desc->w == 0 || desc->h == 0)
+		{
+			LRGL_OVERLAY_ERR("load_simple_image INVALID desc=%p w=%u h=%u",
+				desc, desc ? desc->w : 0u, desc ? desc->h : 0u);
+		}
+
 		auto tex = std::make_unique<gl::texture>(GL_TEXTURE_2D, desc->w, desc->h, 1, 1, 1, GL_RGBA8, RSX_FORMAT_CLASS_COLOR);
+		LRGL_OVERLAY_NOTICE("load_simple_image created tex=%p id=%u", tex.get(), tex ? tex->id() : 0u);
+
 		tex->copy_from(desc->get_data(), gl::texture::format::rgba, gl::texture::type::uint_8_8_8_8, {});
 
 		const GLenum remap[] = { GL_RED, GL_ALPHA, GL_BLUE, GL_GREEN };
@@ -241,6 +278,7 @@ namespace gl
 			temp_view_cache[key] = std::move(view);
 		}
 
+		LRGL_OVERLAY_NOTICE("load_simple_image exit result=%p", result);
 		return result;
 	}
 

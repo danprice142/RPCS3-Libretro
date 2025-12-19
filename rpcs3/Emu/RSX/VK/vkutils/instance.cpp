@@ -188,7 +188,7 @@ namespace vk
 			if (g_cfg.video.debug_output)
 				layers.push_back("VK_LAYER_KHRONOS_validation");
 		}
-#ifdef __APPLE__ 
+#ifdef __APPLE__
 		// MoltenVK's ICD will not be detected without these extensions enabled.
 		else
 		{

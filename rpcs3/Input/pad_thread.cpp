@@ -1,22 +1,25 @@
 #include "stdafx.h"
 #include "pad_thread.h"
 #include "product_info.h"
-#include "ds3_pad_handler.h"
-#include "ds4_pad_handler.h"
-#include "dualsense_pad_handler.h"
-#include "skateboard_pad_handler.h"
-#include "ps_move_handler.h"
-#ifdef _WIN32
-#include "xinput_pad_handler.h"
-#include "mm_joystick_handler.h"
-#elif HAVE_LIBEVDEV
-#include "evdev_joystick_handler.h"
-#endif
-#ifdef HAVE_SDL3
-#include "sdl_pad_handler.h"
-#endif
-#ifndef ANDROID
-#include "keyboard_pad_handler.h"
+
+#ifndef LIBRETRO_CORE
+ #include "ds3_pad_handler.h"
+ #include "ds4_pad_handler.h"
+ #include "dualsense_pad_handler.h"
+ #include "skateboard_pad_handler.h"
+ #include "ps_move_handler.h"
+ #ifdef _WIN32
+  #include "xinput_pad_handler.h"
+  #include "mm_joystick_handler.h"
+ #elif HAVE_LIBEVDEV
+  #include "evdev_joystick_handler.h"
+ #endif
+ #ifdef HAVE_SDL3
+  #include "sdl_pad_handler.h"
+ #endif
+ #ifndef ANDROID
+  #include "keyboard_pad_handler.h"
+ #endif
 #endif
 #include "Emu/Io/Null/NullPadHandler.h"
 #include "Emu/Io/interception.h"
@@ -151,7 +154,8 @@ void pad_thread::Init()
 
 	input_log.trace("Using pad config:\n%s", g_cfg_input);
 
-#ifndef ANDROID
+
+#if !defined(ANDROID) && !defined(LIBRETRO_CORE)
 	std::shared_ptr<keyboard_pad_handler> keyptr;
 #endif
 
@@ -174,14 +178,14 @@ void pad_thread::Init()
 		{
 			if (handler_type == pad_handler::keyboard)
 			{
-#ifndef ANDROID
-				keyptr = std::make_shared<keyboard_pad_handler>();
-				keyptr->moveToThread(static_cast<QThread*>(m_curthread));
-				keyptr->SetTargetWindow(static_cast<QWindow*>(m_curwindow));
-				cur_pad_handler = keyptr;
-#else
-				cur_pad_handler = nullpad;
-#endif
+				#if defined(ANDROID) || defined(LIBRETRO_CORE)
+					cur_pad_handler = nullpad;
+				#else
+					keyptr = std::make_shared<keyboard_pad_handler>();
+					keyptr->moveToThread(static_cast<QThread*>(m_curthread));
+					keyptr->SetTargetWindow(static_cast<QWindow*>(m_curwindow));
+					cur_pad_handler = keyptr;
+				#endif
 			}
 			else
 			{
@@ -842,16 +846,20 @@ void pad_thread::UnregisterLddPad(u32 handle)
 
 std::shared_ptr<PadHandlerBase> pad_thread::GetHandler(pad_handler type)
 {
+#ifdef LIBRETRO_CORE
+	(void)type;
+	return std::make_shared<NullPadHandler>();
+#else
 	switch (type)
 	{
 	case pad_handler::null:
 		return std::make_shared<NullPadHandler>();
 	case pad_handler::keyboard:
-#ifdef ANDROID
+	#ifdef ANDROID
 		return std::make_shared<NullPadHandler>();
-#else
+	#else
 		return std::make_shared<keyboard_pad_handler>();
-#endif
+	#endif
 	case pad_handler::ds3:
 		return std::make_shared<ds3_pad_handler>();
 	case pad_handler::ds4:
@@ -862,23 +870,24 @@ std::shared_ptr<PadHandlerBase> pad_thread::GetHandler(pad_handler type)
 		return std::make_shared<skateboard_pad_handler>();
 	case pad_handler::move:
 		return std::make_shared<ps_move_handler>();
-#ifdef _WIN32
+	#ifdef _WIN32
 	case pad_handler::xinput:
 		return std::make_shared<xinput_pad_handler>();
 	case pad_handler::mm:
 		return std::make_shared<mm_joystick_handler>();
-#endif
-#ifdef HAVE_SDL3
+	#endif
+	#ifdef HAVE_SDL3
 	case pad_handler::sdl:
 		return std::make_shared<sdl_pad_handler>();
-#endif
-#ifdef HAVE_LIBEVDEV
+	#endif
+	#ifdef HAVE_LIBEVDEV
 	case pad_handler::evdev:
 		return std::make_shared<evdev_joystick_handler>();
-#endif
+	#endif
 	}
 
 	return nullptr;
+#endif
 }
 
 void pad_thread::InitPadConfig(cfg_pad& cfg, pad_handler type, std::shared_ptr<PadHandlerBase>& handler)

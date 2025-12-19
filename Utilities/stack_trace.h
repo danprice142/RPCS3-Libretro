@@ -33,6 +33,10 @@ namespace utils
 	std::vector<void*> get_backtrace(int max_depth = 255);
 	std::vector<std::string> get_backtrace_symbols(const std::vector<void*>& stack);
 
+#ifdef _WIN32
+	std::vector<void*> get_backtrace_from_context(const void* context, int max_depth = 255);
+#endif
+
 	FORCE_INLINE void print_trace(stack_trace::Logger auto& logger, int max_depth = 255)
 	{
 		const auto trace = get_backtrace(max_depth);
