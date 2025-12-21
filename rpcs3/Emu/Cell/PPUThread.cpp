@@ -3710,8 +3710,10 @@ extern void ppu_finalize(const ppu_module<lv2_obj>& info, bool force_mem_release
 	// Get cache path for this executable
 	std::string cache_path = rpcs3::utils::get_cache_dir(info.path);
 
-	// Add PPU hash and filename
-	fmt::append(cache_path, "ppu-%s-%s/", fmt::base57(info.sha1), info.path.substr(info.path.find_last_of('/') + 1));
+	// Add PPU hash and filename (handle both forward and backslashes for Windows paths)
+	const auto last_sep = info.path.find_last_of("/\\");
+	const auto filename = (last_sep != std::string::npos) ? info.path.substr(last_sep + 1) : info.path;
+	fmt::append(cache_path, "ppu-%s-%s/", fmt::base57(info.sha1), filename);
 
 #ifdef LLVM_AVAILABLE
 	g_fxo->get<jit_module_manager>().remove(cache_path + "_" + std::to_string(std::bit_cast<usz>(info.segs[0].ptr)));
@@ -4587,8 +4589,10 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		// New PPU cache location
 		cache_path = rpcs3::utils::get_cache_dir(info.path);
 
-		// Add PPU hash and filename
-		fmt::append(cache_path, "ppu-%s-%s/", fmt::base57(info.sha1), info.path.substr(info.path.find_last_of('/') + 1));
+		// Add PPU hash and filename (handle both forward and backslashes for Windows paths)
+		const auto last_sep2 = info.path.find_last_of("/\\");
+		const auto filename2 = (last_sep2 != std::string::npos) ? info.path.substr(last_sep2 + 1) : info.path;
+		fmt::append(cache_path, "ppu-%s-%s/", fmt::base57(info.sha1), filename2);
 
 		if (!fs::create_path(cache_path))
 		{

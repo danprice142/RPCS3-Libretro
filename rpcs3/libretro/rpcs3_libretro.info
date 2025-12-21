@@ -1,0 +1,41 @@
+# Software Information
+display_name = "Sony - PlayStation 3 (RPCS3)"
+authors = "RPCS3 Team"
+supported_extensions = "bin|self|elf|iso|pkg"
+corename = "RPCS3"
+license = "GPLv2"
+permissions = ""
+display_version = "0.0.1"
+categories = "Emulator"
+
+# Hardware Information
+manufacturer = "Sony"
+systemname = "PlayStation 3"
+systemid = "ps3"
+
+# Libretro Features
+database = "Sony - PlayStation 3"
+supports_no_game = "false"
+savestate = "false"
+savestate_features = "null"
+cheats = "false"
+input_descriptors = "true"
+memory_descriptors = "false"
+libretro_saves = "false"
+core_options = "true"
+core_options_version = "2.0"
+load_subsystem = "false"
+hw_render = "true"
+required_hw_api = "OpenGL Core >= 4.3"
+needs_fullpath = "true"
+disk_control = "false"
+is_experimental = "true"
+single_purpose = "false"
+
+# Firmware
+firmware_count = 1
+firmware0_desc = "PS3UPDAT.PUP (PS3 Firmware)"
+firmware0_path = "PS3UPDAT.PUP"
+firmware0_opt = "false"
+
+description = "RPCS3 is an open-source PlayStation 3 emulator and debugger for Windows, Linux, macOS and FreeBSD. This is the libretro core version for use with RetroArch and other libretro frontends. Requires PS3 firmware to be installed."

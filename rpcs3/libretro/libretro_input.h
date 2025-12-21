@@ -80,3 +80,15 @@ void libretro_input_set_descriptors(retro_environment_t environ_cb);
 
 // Set up controller info for RetroArch
 void libretro_input_set_controller_info(retro_environment_t environ_cb);
+
+// Initialize sensor interface for gyro/accelerometer
+bool libretro_input_init_sensors(retro_environment_t environ_cb);
+
+// Poll sensor data (gyro/accelerometer)
+void libretro_input_poll_sensors();
+
+// Get gyro data for a port (returns angular velocity in rad/s)
+void libretro_input_get_gyro(unsigned port, float& x, float& y, float& z);
+
+// Get accelerometer data for a port (returns acceleration in g)
+void libretro_input_get_accel(unsigned port, float& x, float& y, float& z);

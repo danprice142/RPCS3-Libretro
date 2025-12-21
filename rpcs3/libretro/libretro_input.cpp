@@ -355,3 +355,87 @@ void libretro_input_set_controller_info(retro_environment_t environ_cb)
 
     environ_cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
 }
+
+// Sensor interface for gyro/accelerometer support
+static retro_set_sensor_state_t s_sensor_set_state_cb = nullptr;
+static retro_sensor_get_input_t s_sensor_get_input_cb = nullptr;
+static bool s_sensors_available = false;
+
+// Sensor data storage
+struct SensorData
+{
+    float gyro_x = 0.0f;
+    float gyro_y = 0.0f;
+    float gyro_z = 0.0f;
+    float accel_x = 0.0f;
+    float accel_y = 0.0f;
+    float accel_z = 0.0f;
+};
+static std::array<SensorData, LIBRETRO_MAX_PADS> s_sensor_data;
+
+bool libretro_input_init_sensors(retro_environment_t environ_cb)
+{
+    if (!environ_cb)
+        return false;
+
+    // Get sensor interface from frontend
+    struct retro_sensor_interface sensor_interface;
+    if (environ_cb(RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE, &sensor_interface))
+    {
+        s_sensor_set_state_cb = sensor_interface.set_sensor_state;
+        s_sensor_get_input_cb = sensor_interface.get_sensor_input;
+
+        if (s_sensor_set_state_cb && s_sensor_get_input_cb)
+        {
+            // Try to enable gyro and accelerometer for port 0
+            bool gyro_enabled = s_sensor_set_state_cb(0, RETRO_SENSOR_GYROSCOPE_ENABLE, 1);
+            bool accel_enabled = s_sensor_set_state_cb(0, RETRO_SENSOR_ACCELEROMETER_ENABLE, 1);
+
+            s_sensors_available = gyro_enabled || accel_enabled;
+            return s_sensors_available;
+        }
+    }
+
+    s_sensors_available = false;
+    return false;
+}
+
+void libretro_input_poll_sensors()
+{
+    if (!s_sensors_available || !s_sensor_get_input_cb)
+        return;
+
+    // Poll sensor data for port 0 (primary controller)
+    s_sensor_data[0].gyro_x = s_sensor_get_input_cb(0, RETRO_SENSOR_GYROSCOPE_X);
+    s_sensor_data[0].gyro_y = s_sensor_get_input_cb(0, RETRO_SENSOR_GYROSCOPE_Y);
+    s_sensor_data[0].gyro_z = s_sensor_get_input_cb(0, RETRO_SENSOR_GYROSCOPE_Z);
+    s_sensor_data[0].accel_x = s_sensor_get_input_cb(0, RETRO_SENSOR_ACCELEROMETER_X);
+    s_sensor_data[0].accel_y = s_sensor_get_input_cb(0, RETRO_SENSOR_ACCELEROMETER_Y);
+    s_sensor_data[0].accel_z = s_sensor_get_input_cb(0, RETRO_SENSOR_ACCELEROMETER_Z);
+}
+
+void libretro_input_get_gyro(unsigned port, float& x, float& y, float& z)
+{
+    if (port >= LIBRETRO_MAX_PADS)
+    {
+        x = y = z = 0.0f;
+        return;
+    }
+
+    x = s_sensor_data[port].gyro_x;
+    y = s_sensor_data[port].gyro_y;
+    z = s_sensor_data[port].gyro_z;
+}
+
+void libretro_input_get_accel(unsigned port, float& x, float& y, float& z)
+{
+    if (port >= LIBRETRO_MAX_PADS)
+    {
+        x = y = z = 0.0f;
+        return;
+    }
+
+    x = s_sensor_data[port].accel_x;
+    y = s_sensor_data[port].accel_y;
+    z = s_sensor_data[port].accel_z;
+}

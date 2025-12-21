@@ -492,6 +492,67 @@ RETRO_API unsigned retro_get_region(void);
 RETRO_API void *retro_get_memory_data(unsigned id);
 RETRO_API size_t retro_get_memory_size(unsigned id);
 
+/* Sensor interface for gyro/accelerometer */
+#define RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE (25 | 0x10000)
+
+#define RETRO_SENSOR_ACCELEROMETER_X 0
+#define RETRO_SENSOR_ACCELEROMETER_Y 1
+#define RETRO_SENSOR_ACCELEROMETER_Z 2
+#define RETRO_SENSOR_GYROSCOPE_X 3
+#define RETRO_SENSOR_GYROSCOPE_Y 4
+#define RETRO_SENSOR_GYROSCOPE_Z 5
+
+#define RETRO_SENSOR_ACCELEROMETER_ENABLE 0
+#define RETRO_SENSOR_ACCELEROMETER_DISABLE 1
+#define RETRO_SENSOR_GYROSCOPE_ENABLE 2
+#define RETRO_SENSOR_GYROSCOPE_DISABLE 3
+
+typedef bool (RETRO_CALLCONV *retro_set_sensor_state_t)(unsigned port, unsigned action, unsigned rate);
+typedef float (RETRO_CALLCONV *retro_sensor_get_input_t)(unsigned port, unsigned id);
+
+struct retro_sensor_interface
+{
+   retro_set_sensor_state_t set_sensor_state;
+   retro_sensor_get_input_t get_sensor_input;
+};
+
+/* Core options v2 API */
+#define RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 (67 | 0x10000)
+
+#define RETRO_CORE_OPTION_V2_CAT_MAX_LEN 64
+#define RETRO_CORE_OPTION_V2_MAX_VALUES 128
+
+struct retro_core_option_v2_category
+{
+   const char *key;
+   const char *desc;
+   const char *info;
+};
+
+struct retro_core_option_value
+{
+   const char *value;
+   const char *label;
+};
+
+struct retro_core_option_v2_definition
+{
+   const char *key;
+   const char *desc;
+   const char *desc_categorized;
+   const char *info;
+   const char *info_categorized;
+   const char *category_key;
+   struct retro_core_option_value values[RETRO_CORE_OPTION_V2_MAX_VALUES];
+   const char *default_value;
+};
+
+struct retro_core_options_v2
+{
+   struct retro_core_option_v2_category *categories;
+   struct retro_core_option_v2_definition *definitions;
+};
+
 #ifdef __cplusplus
 }
 #endif
