@@ -9,6 +9,7 @@ add_library(rpcs3_libretro SHARED
     libretro_pad_handler.cpp
     libretro_frontend.cpp
     libretro_firmware.cpp
+    libretro_vfs.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/product_info.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ps_move_config.cpp

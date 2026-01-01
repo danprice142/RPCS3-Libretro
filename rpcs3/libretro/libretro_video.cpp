@@ -74,12 +74,8 @@ static void create_rsx_render_resources(int width, int height)
     if (s_rsx_resources_created.load())
         return;
 
-    libretro_video_log.notice("[LRGL] create_rsx_render_resources: starting width=%d height=%d", width, height);
-
     // Create shared texture using standard GL calls
     glGenTextures(1, &s_shared_texture);
-    libretro_video_log.notice("[LRGL] create_rsx_render_resources: glGenTextures returned texture=%u", s_shared_texture);
-
     glBindTexture(GL_TEXTURE_2D, s_shared_texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -90,14 +86,12 @@ static void create_rsx_render_resources(int width, int height)
 
     // Create RSX-side FBO
     glGenFramebuffers(1, &s_rsx_fbo);
-    libretro_video_log.notice("[LRGL] create_rsx_render_resources: glGenFramebuffers returned fbo=%u", s_rsx_fbo);
 
     // Use traditional bind-and-attach method (more reliable than DSA)
     glBindFramebuffer(GL_FRAMEBUFFER, s_rsx_fbo);
 
     // Attach color texture
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_shared_texture, 0);
-    libretro_video_log.notice("[LRGL] create_rsx_render_resources: attached texture %u to fbo %u", s_shared_texture, s_rsx_fbo);
 
     // Add depth/stencil renderbuffer
     glGenRenderbuffers(1, &s_depth_stencil_rb);
@@ -107,10 +101,6 @@ static void create_rsx_render_resources(int width, int height)
 
     // Attach depth/stencil renderbuffer
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, s_depth_stencil_rb);
-    libretro_video_log.notice("[LRGL] create_rsx_render_resources: attached depth_rb %u to fbo %u", s_depth_stencil_rb, s_rsx_fbo);
-
-    // Check framebuffer status
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 
     // Unbind FBO
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -118,9 +108,6 @@ static void create_rsx_render_resources(int width, int height)
     s_shared_texture_width = width;
     s_shared_texture_height = height;
     s_rsx_resources_created = true;
-
-    libretro_video_log.notice("[LRGL] Created RSX render resources: texture=%u fbo=%u depth_rb=%u size=%dx%d status=0x%x (complete=0x%x)",
-        s_shared_texture, s_rsx_fbo, s_depth_stencil_rb, width, height, status, GL_FRAMEBUFFER_COMPLETE);
 }
 
 // Resize shared texture when game resolution changes (called from RSX thread)
@@ -131,9 +118,6 @@ static void resize_rsx_render_resources(int new_width, int new_height)
 
     if (new_width == s_shared_texture_width && new_height == s_shared_texture_height)
         return;
-
-    libretro_video_log.notice("[LRGL] resize_rsx_render_resources: resizing from %dx%d to %dx%d",
-        s_shared_texture_width, s_shared_texture_height, new_width, new_height);
 
     // Resize texture
     glBindTexture(GL_TEXTURE_2D, s_shared_texture);
@@ -150,8 +134,6 @@ static void resize_rsx_render_resources(int new_width, int new_height)
 
     // Mark main thread FBO as needing recreation (texture changed)
     s_main_fbo_created = false;
-
-    libretro_video_log.notice("[LRGL] resize_rsx_render_resources: completed, new size=%dx%d", new_width, new_height);
 }
 
 void libretro_ensure_render_size(int width, int height)
@@ -203,8 +185,6 @@ static void create_main_read_fbo()
     if (s_main_fbo_created.load() || s_shared_texture == 0)
         return;
 
-    libretro_video_log.notice("[LRGL] create_main_read_fbo: creating FBO for shared_texture=%u", s_shared_texture);
-
     // Create FBO on main thread's context
     glGenFramebuffers(1, &s_main_read_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, s_main_read_fbo);
@@ -212,13 +192,10 @@ static void create_main_read_fbo()
     // Attach the shared texture (texture IS shared between contexts)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_shared_texture, 0);
 
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glCheckFramebufferStatus(GL_FRAMEBUFFER);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     s_main_fbo_created = true;
-
-    libretro_video_log.notice("[LRGL] create_main_read_fbo: created main_read_fbo=%u status=0x%x (complete=0x%x)",
-        s_main_read_fbo, status, GL_FRAMEBUFFER_COMPLETE);
 }
 
 void libretro_blit_to_frontend()
@@ -237,17 +214,6 @@ void libretro_blit_to_frontend()
 
     // Get RetroArch's actual FBO
     GLuint frontend_fbo = static_cast<GLuint>(s_get_current_framebuffer());
-
-    thread_local u64 tl_blit_count = 0;
-    tl_blit_count++;
-    const bool log_this = (tl_blit_count <= 120ull) || ((tl_blit_count % 60ull) == 0ull);
-
-    if (log_this)
-    {
-        libretro_video_log.notice("[LRGL] libretro_blit_to_frontend: shared_tex=%u main_read_fbo=%u frontend_fbo=%u size=%dx%d call=%llu",
-            s_shared_texture, s_main_read_fbo, frontend_fbo, s_shared_texture_width, s_shared_texture_height,
-            static_cast<unsigned long long>(tl_blit_count));
-    }
 
     // Blit from main thread's read FBO (which references shared texture) to RetroArch's FBO
     // NOTE: We use s_main_read_fbo, NOT s_rsx_fbo, because FBOs are context-specific!
@@ -332,31 +298,6 @@ void libretro_cleanup_gl_state()
     // which was a major performance bottleneck, especially on some drivers.
 }
 
-#ifndef RPCS3_LIBRETRO_GL_TRACE
-#define RPCS3_LIBRETRO_GL_TRACE 1
-#endif
-
-static inline unsigned long long lrgl_tid_hash()
-{
-	return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-}
-
-#if RPCS3_LIBRETRO_GL_TRACE
-	#ifdef _WIN32
-		#define LRGL_TRACE(fmt, ...) libretro_video_log.notice("[LRGL][tid=%llx][cur_hdc=%p][cur_hglrc=%p] " fmt, lrgl_tid_hash(), wglGetCurrentDC(), wglGetCurrentContext() __VA_OPT__(,) __VA_ARGS__)
-		#define LRGL_WARN(fmt, ...)  libretro_video_log.warning("[LRGL][tid=%llx][cur_hdc=%p][cur_hglrc=%p] " fmt, lrgl_tid_hash(), wglGetCurrentDC(), wglGetCurrentContext() __VA_OPT__(,) __VA_ARGS__)
-		#define LRGL_ERR(fmt, ...)   libretro_video_log.error("[LRGL][tid=%llx][cur_hdc=%p][cur_hglrc=%p] " fmt, lrgl_tid_hash(), wglGetCurrentDC(), wglGetCurrentContext() __VA_OPT__(,) __VA_ARGS__)
-	#else
-		#define LRGL_TRACE(fmt, ...) libretro_video_log.notice("[LRGL][tid=%llx] " fmt, lrgl_tid_hash() __VA_OPT__(,) __VA_ARGS__)
-		#define LRGL_WARN(fmt, ...)  libretro_video_log.warning("[LRGL][tid=%llx] " fmt, lrgl_tid_hash() __VA_OPT__(,) __VA_ARGS__)
-		#define LRGL_ERR(fmt, ...)   libretro_video_log.error("[LRGL][tid=%llx] " fmt, lrgl_tid_hash() __VA_OPT__(,) __VA_ARGS__)
-	#endif
-#else
-	#define LRGL_TRACE(...) do { } while (0)
-	#define LRGL_WARN(...)  do { } while (0)
-	#define LRGL_ERR(...)   do { } while (0)
-#endif
-
 void libretro_wait_for_present_fence()
 {
     if (!s_gl_initialized)
@@ -368,37 +309,13 @@ void libretro_wait_for_present_fence()
     if (!fence)
         return;
 
-    thread_local u64 tl_wait_calls = 0;
-    thread_local u64 tl_timeout_count = 0;
-    tl_wait_calls++;
-
     if (!glClientWaitSync || !glDeleteSync)
-    {
-        LRGL_ERR("libretro_wait_for_present_fence missing glClientWaitSync/glDeleteSync fence=%p", fence);
         return;
-    }
 
     // Use glClientWaitSync to actually wait for RSX GPU work to complete.
-    // This ensures the shared texture data is fully written before we read it.
-    // Use a short timeout to avoid blocking audio - if we timeout, still proceed.
-    constexpr GLuint64 timeout_ns = 8000000; // 8ms max wait (half a frame at 60fps)
-    GLenum result = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, timeout_ns);
-
-    if (result == GL_TIMEOUT_EXPIRED || result == GL_WAIT_FAILED)
-    {
-        tl_timeout_count++;
-    }
-
-    const bool log_this = (tl_wait_calls <= 120ull) || ((tl_wait_calls % 60ull) == 0ull) || result != GL_ALREADY_SIGNALED;
-    if (log_this)
-    {
-        const char* result_str = (result == GL_ALREADY_SIGNALED) ? "SIGNALED" :
-                                  (result == GL_CONDITION_SATISFIED) ? "SATISFIED" :
-                                  (result == GL_TIMEOUT_EXPIRED) ? "TIMEOUT" : "FAILED";
-        LRGL_TRACE("libretro_wait_for_present_fence fence=%p result=%s timeouts=%llu call=%llu",
-            fence, result_str, static_cast<unsigned long long>(tl_timeout_count), static_cast<unsigned long long>(tl_wait_calls));
-    }
-
+    // Use a very short timeout to avoid blocking audio/main thread
+    constexpr GLuint64 timeout_ns = 1000000; // 1ms max wait
+    glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, timeout_ns);
     glDeleteSync(fence);
 }
 
@@ -407,27 +324,13 @@ void libretro_wait_for_present_fence()
 static void precreate_shared_contexts(int count)
 {
 #ifdef _WIN32
-    LRGL_TRACE("precreate_shared_contexts enter count=%d s_main_hdc=%p s_main_hglrc=%p wglCreateContextAttribsARB_ptr=%p", count, s_main_hdc, s_main_hglrc, wglCreateContextAttribsARB_ptr);
     if (!s_main_hdc || !s_main_hglrc || !wglCreateContextAttribsARB_ptr)
-    {
-        LRGL_ERR("Cannot pre-create shared contexts: prerequisites not met");
         return;
-    }
-
-    LRGL_TRACE("Pre-creating %d shared OpenGL contexts...", count);
 
     // Temporarily unbind main context so we can share with it
-    // (wglShareLists and wglCreateContextAttribsARB with share require contexts to be idle)
     if (!wglMakeCurrent(NULL, NULL))
-    {
-        DWORD error = GetLastError();
-        LRGL_ERR("Failed to unbind main context for sharing (error=%u)", error);
         return;
-    }
 
-    LRGL_TRACE("Main context unbound for pre-creation");
-
-    int created = 0;
     for (int i = 0; i < count; i++)
     {
         int attribs[] = {
@@ -442,28 +345,11 @@ static void precreate_shared_contexts(int count)
         {
             std::lock_guard<std::mutex> lock(s_context_pool_mutex);
             s_available_contexts.push_back(shared_ctx);
-            created++;
-            LRGL_TRACE("Pre-created shared context idx=%d hglrc=%p pool_size=%zu", i, shared_ctx, s_available_contexts.size());
-        }
-        else
-        {
-            DWORD error = GetLastError();
-            LRGL_ERR("Failed to pre-create shared context idx=%d (error=%u)", i, error);
         }
     }
 
     // Restore main context
-    if (!wglMakeCurrent(s_main_hdc, s_main_hglrc))
-    {
-        DWORD error = GetLastError();
-        LRGL_ERR("Failed to restore main context after pre-creation (error=%u)", error);
-    }
-    else
-    {
-        LRGL_TRACE("Main context restored after pre-creation");
-    }
-
-    LRGL_TRACE("Pre-created %d/%d shared contexts", created, count);
+    wglMakeCurrent(s_main_hdc, s_main_hglrc);
 #endif
 }
 
@@ -471,38 +357,16 @@ static void precreate_shared_contexts(int count)
 static void libretro_gl_init()
 {
     if (!s_get_proc_address)
-    {
-        LRGL_ERR("Cannot initialize GL: no proc address callback");
         return;
-    }
-
-    LRGL_TRACE("libretro_gl_init enter s_get_proc_address=%p", reinterpret_cast<void*>(s_get_proc_address));
 
 #ifdef _WIN32
     // Save the main thread's context info for creating shared contexts later
     s_main_hdc = wglGetCurrentDC();
     s_main_hglrc = wglGetCurrentContext();
 
-    if (s_main_hdc && s_main_hglrc)
-    {
-        LRGL_TRACE("Captured main OpenGL context: HDC=%p, HGLRC=%p", s_main_hdc, s_main_hglrc);
-    }
-    else
-    {
-        LRGL_ERR("Failed to capture main OpenGL context!");
-    }
-
     // Load wglCreateContextAttribsARB for creating shared contexts
     wglCreateContextAttribsARB_ptr = reinterpret_cast<PFNWGLCREATECONTEXTATTRIBSARBPROC>(
         s_get_proc_address("wglCreateContextAttribsARB"));
-    if (!wglCreateContextAttribsARB_ptr)
-    {
-        LRGL_WARN("wglCreateContextAttribsARB not available - shared contexts may not work");
-    }
-    else
-    {
-        LRGL_TRACE("Loaded wglCreateContextAttribsARB_ptr=%p", wglCreateContextAttribsARB_ptr);
-    }
 
     // Load GL functions using libretro's callback instead of wglGetProcAddress
     // Use X-macro pattern with GLProcTable.h
@@ -522,14 +386,11 @@ static void libretro_gl_init()
     #undef WGL_PROC
 
     // Pre-create shared contexts for RSX thread and shader compiler threads
-    // RPCS3 needs: 1 for RSX main thread + up to 8 for shader compiler threads
     precreate_shared_contexts(10);
 #else
     // On Unix, fall back to RPCS3's normal init (uses GLEW)
     gl::init();
 #endif
-
-    LRGL_TRACE("OpenGL initialization complete");
 }
 
 // Store the actual FBO dimensions from RetroArch
@@ -545,37 +406,24 @@ void libretro_video_init(retro_hw_get_current_framebuffer_t get_fb, retro_hw_get
     s_get_current_framebuffer = get_fb;
     s_get_proc_address = get_proc;
 
-    LRGL_TRACE("libretro_video_init get_fb=%p get_proc=%p s_gl_initialized=%d", reinterpret_cast<void*>(get_fb), reinterpret_cast<void*>(get_proc), s_gl_initialized ? 1 : 0);
-
-    // Initialize OpenGL using libretro's proc address callback
-    // This ensures we use the same context that RetroArch created
     if (!s_gl_initialized)
     {
         libretro_gl_init();
         s_gl_initialized = true;
-        LRGL_TRACE("libretro_video_init finished initial GL init");
-    }
-    else
-    {
-        LRGL_TRACE("libretro_video_init GL already initialized; skipping libretro_gl_init");
     }
 
-    // Query the actual FBO/viewport size from RetroArch's context
-    // This is done once during init when RetroArch's viewport is set correctly
     GLint viewport[4] = {0, 0, 0, 0};
     glGetIntegerv(GL_VIEWPORT, viewport);
     if (viewport[2] > 0 && viewport[3] > 0)
     {
         s_fbo_width = viewport[2];
         s_fbo_height = viewport[3];
-        LRGL_TRACE("libretro_video_init: captured FBO size %dx%d", s_fbo_width, s_fbo_height);
     }
 }
 
 void libretro_video_deinit()
 {
     std::lock_guard<std::mutex> lock(s_video_mutex);
-    LRGL_TRACE("libretro_video_deinit clearing callbacks");
     s_get_current_framebuffer = nullptr;
     s_get_proc_address = nullptr;
 }
@@ -583,34 +431,14 @@ void libretro_video_deinit()
 uintptr_t libretro_get_current_framebuffer()
 {
     if (s_get_current_framebuffer)
-    {
-        const auto fbo = s_get_current_framebuffer();
-#if RPCS3_LIBRETRO_GL_TRACE
-        thread_local u64 tl_call_count = 0;
-        thread_local unsigned long long tl_last_fbo = ~0ull;
-        tl_call_count++;
-        const bool log_this = (tl_call_count <= 120ull) || ((tl_call_count % 60ull) == 0ull) || (static_cast<unsigned long long>(fbo) != tl_last_fbo);
-        if (log_this)
-        {
-            LRGL_TRACE("libretro_get_current_framebuffer -> 0x%llx (last=0x%llx call=%llu)", static_cast<unsigned long long>(fbo), tl_last_fbo, static_cast<unsigned long long>(tl_call_count));
-        }
-        tl_last_fbo = static_cast<unsigned long long>(fbo);
-#endif
-        return fbo;
-    }
-    LRGL_WARN("libretro_get_current_framebuffer called but callback missing");
+        return s_get_current_framebuffer();
     return 0;
 }
 
 void* libretro_get_proc_address(const char* sym)
 {
     if (s_get_proc_address)
-    {
-        void* const p = s_get_proc_address(sym);
-        LRGL_TRACE("libretro_get_proc_address sym=%s -> %p", sym ? sym : "(null)", p);
-        return p;
-    }
-    LRGL_WARN("libretro_get_proc_address called but callback missing (sym=%s)", sym ? sym : "(null)");
+        return s_get_proc_address(sym);
     return nullptr;
 }
 
@@ -660,8 +488,6 @@ void LibretroGSFrame::delete_context(draw_context_t ctx)
     if (ctx)
     {
         HGLRC hglrc = reinterpret_cast<HGLRC>(ctx);
-        LRGL_TRACE("LibretroGSFrame::delete_context ctx=%p hglrc=%p s_main_hglrc=%p", ctx, hglrc, s_main_hglrc);
-        // Don't delete the main context
         if (hglrc != s_main_hglrc)
         {
             std::lock_guard<std::mutex> lock(s_video_mutex);
@@ -670,11 +496,6 @@ void LibretroGSFrame::delete_context(draw_context_t ctx)
             {
                 wglDeleteContext(hglrc);
                 s_shared_contexts.erase(it);
-                LRGL_TRACE("Deleted shared OpenGL context: %p", hglrc);
-            }
-            else
-            {
-                LRGL_WARN("Requested delete of context not tracked in s_shared_contexts: %p", hglrc);
             }
         }
     }
@@ -686,7 +507,6 @@ void LibretroGSFrame::delete_context(draw_context_t ctx)
 draw_context_t LibretroGSFrame::make_context()
 {
 #ifdef _WIN32
-    LRGL_TRACE("LibretroGSFrame::make_context enter s_main_hdc=%p s_main_hglrc=%p pool=%zu shared=%zu", s_main_hdc, s_main_hglrc, s_available_contexts.size(), s_shared_contexts.size());
     // Try to get a pre-created shared context from the pool
     {
         std::lock_guard<std::mutex> lock(s_context_pool_mutex);
@@ -695,20 +515,13 @@ draw_context_t LibretroGSFrame::make_context()
             HGLRC ctx = s_available_contexts.back();
             s_available_contexts.pop_back();
             s_shared_contexts.push_back(ctx);
-            LRGL_TRACE("Allocated pre-created shared context: %p (pool_remaining=%zu shared_total=%zu)", ctx, s_available_contexts.size(), s_shared_contexts.size());
             m_context = reinterpret_cast<draw_context_t>(ctx);
             return m_context;
         }
     }
 
-    // Pool exhausted - try to create a new context (may fail if main context is busy)
-    LRGL_WARN("Shared context pool exhausted, attempting dynamic creation...");
-
     if (!s_main_hdc || !s_main_hglrc)
-    {
-        LRGL_ERR("Cannot create context: main context not captured");
         return nullptr;
-    }
 
     HGLRC shared_context = nullptr;
 
@@ -721,57 +534,24 @@ draw_context_t LibretroGSFrame::make_context()
             0
         };
 
-        // Try with sharing (will likely fail if main context is current)
         shared_context = wglCreateContextAttribsARB_ptr(s_main_hdc, s_main_hglrc, attribs);
         if (!shared_context)
-        {
-            DWORD error = GetLastError();
-            LRGL_WARN("wglCreateContextAttribsARB(shared) failed (error=%u)", error);
-            // Create without sharing as fallback (won't share resources)
             shared_context = wglCreateContextAttribsARB_ptr(s_main_hdc, nullptr, attribs);
-            if (shared_context)
-            {
-                LRGL_WARN("Created non-shared context (resources won't be shared): %p", shared_context);
-            }
-            else
-            {
-                DWORD error2 = GetLastError();
-                LRGL_ERR("wglCreateContextAttribsARB(non-shared) failed (error=%u)", error2);
-            }
-        }
-        else
-        {
-            LRGL_TRACE("Created shared context via wglCreateContextAttribsARB: %p", shared_context);
-        }
     }
 
     if (!shared_context)
-    {
         shared_context = wglCreateContext(s_main_hdc);
-        if (!shared_context)
-        {
-            DWORD error = GetLastError();
-            LRGL_ERR("wglCreateContext failed (error=%u)", error);
-        }
-        else
-        {
-            LRGL_TRACE("Created context via wglCreateContext: %p", shared_context);
-        }
-    }
 
     if (shared_context)
     {
         std::lock_guard<std::mutex> lock(s_context_pool_mutex);
         s_shared_contexts.push_back(shared_context);
-        LRGL_TRACE("Created OpenGL context: %p shared_total=%zu", shared_context, s_shared_contexts.size());
         m_context = reinterpret_cast<draw_context_t>(shared_context);
         return m_context;
     }
 
-    LRGL_ERR("Failed to create OpenGL context");
     return nullptr;
 #else
-    // On Unix, return dummy - proper implementation needed
     m_context = reinterpret_cast<draw_context_t>(1);
     return m_context;
 #endif
@@ -780,26 +560,10 @@ draw_context_t LibretroGSFrame::make_context()
 void LibretroGSFrame::set_current(draw_context_t ctx)
 {
 #ifdef _WIN32
-    LRGL_TRACE("LibretroGSFrame::set_current ctx=%p s_main_hdc=%p", ctx, s_main_hdc);
     if (ctx && s_main_hdc)
     {
         HGLRC hglrc = reinterpret_cast<HGLRC>(ctx);
-        HGLRC prev = wglGetCurrentContext();
-        HDC prev_dc = wglGetCurrentDC();
-        LRGL_TRACE("wglMakeCurrent request prev_hdc=%p prev_hglrc=%p new_hglrc=%p", prev_dc, prev, hglrc);
-        if (!wglMakeCurrent(s_main_hdc, hglrc))
-        {
-            DWORD error = GetLastError();
-            LRGL_ERR("wglMakeCurrent failed (error=%u) target_hdc=%p target_hglrc=%p", error, s_main_hdc, hglrc);
-        }
-        else
-        {
-            LRGL_TRACE("Made OpenGL context current: %p", hglrc);
-        }
-    }
-    else
-    {
-        LRGL_WARN("LibretroGSFrame::set_current skipped (ctx=%p s_main_hdc=%p)", ctx, s_main_hdc);
+        wglMakeCurrent(s_main_hdc, hglrc);
     }
 #else
     (void)ctx;
@@ -808,47 +572,27 @@ void LibretroGSFrame::set_current(draw_context_t ctx)
 
 void LibretroGSFrame::flip(draw_context_t ctx, bool skip_frame)
 {
+    (void)ctx;
     if (skip_frame)
-    {
-        LRGL_TRACE("LibretroGSFrame::flip skip_frame=1 ctx=%p", ctx);
         return;
-    }
 
-    LRGL_TRACE("LibretroGSFrame::flip skip_frame=0 ctx=%p dims=%dx%d", ctx, m_width, m_height);
-
-    if (!glFenceSync || !glDeleteSync)
-    {
-        LRGL_ERR("LibretroGSFrame::flip missing glFenceSync/glDeleteSync (ctx=%p)", ctx);
-    }
-    else
+    if (glFenceSync && glDeleteSync)
     {
         GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         glFlush();
 
-        const auto fence_id = s_present_fence_counter.fetch_add(1) + 1;
         GLsync old = s_present_fence.exchange(fence);
         if (old)
-        {
             glDeleteSync(old);
-        }
-
-        const bool log_this = (fence_id <= 120ull) || ((fence_id % 60ull) == 0ull) || old;
-        if (log_this)
-        {
-            LRGL_TRACE("LibretroGSFrame::flip present_fence id=%llu fence=%p old=%p", static_cast<unsigned long long>(fence_id), fence, old);
-        }
     }
 
-    // RSX uses double-buffering and calls flip() twice per frame (push + pop)
+    // RSX uses double-buffering and calls flip() twice per frame
     // Only signal frame ready every other flip to maintain proper 60fps pacing
     static thread_local u64 tl_flip_count = 0;
     tl_flip_count++;
 
     if ((tl_flip_count % 2) == 0)
-    {
-        // Signal that a frame is ready for the frontend (every other flip = actual presentation)
         libretro_signal_frame_ready();
-    }
 }
 
 void LibretroGSFrame::update_dimensions_from_fbo()
@@ -864,7 +608,6 @@ void LibretroGSFrame::set_dimensions(int w, int h)
     {
         m_width = w;
         m_height = h;
-        LRGL_TRACE("set_dimensions: %dx%d", m_width, m_height);
     }
 }
 

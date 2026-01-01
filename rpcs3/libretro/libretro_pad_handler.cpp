@@ -2,8 +2,6 @@
 #include "libretro_pad_handler.h"
 #include "libretro_input.h"
 
-LOG_CHANNEL(libretro_pad_log, "LibretroPad");
-
 LibretroPadHandler::LibretroPadHandler()
     : PadHandlerBase(pad_handler::keyboard)  // Use keyboard type as base since we're a custom handler
 {
@@ -56,7 +54,6 @@ LibretroPadHandler::LibretroPadHandler()
 
 bool LibretroPadHandler::Init()
 {
-    libretro_pad_log.notice("LibretroPadHandler::Init()");
     m_is_init = true;
     return true;
 }
@@ -157,9 +154,6 @@ bool LibretroPadHandler::bindPadToDevice(std::shared_ptr<Pad> pad)
 
     // Set pad as connected
     pad->m_port_status |= CELL_PAD_STATUS_CONNECTED;
-
-    libretro_pad_log.notice("LibretroPadHandler::bindPadToDevice() - Bound pad with %zu buttons, total bindings: %zu",
-        pad->m_buttons.size(), m_bindings.size());
     return true;
 }
 
@@ -259,26 +253,12 @@ pad_preview_values LibretroPadHandler::get_preview_values(const std::unordered_m
 
 void LibretroPadHandler::process()
 {
-    static u64 s_process_counter = 0;
-    s_process_counter++;
-
-    // Debug: Log binding count periodically
-    if ((s_process_counter % 300) == 1)
-    {
-        libretro_pad_log.notice("LibretroPadHandler::process() #%llu - m_bindings.size()=%zu",
-            static_cast<unsigned long long>(s_process_counter), m_bindings.size());
-    }
-
     // Process each bound pad
     for (usz i = 0; i < m_bindings.size(); i++)
     {
         auto& binding = m_bindings[i];
         if (!binding.pad || !binding.device)
-        {
-            if ((s_process_counter % 300) == 1)
-                libretro_pad_log.notice("  binding[%zu] - pad=%p device=%p (skipping)", i, (void*)binding.pad.get(), (void*)binding.device.get());
             continue;
-        }
 
         // Set player ID for device
         binding.device->player_id = static_cast<u8>(i);
@@ -292,41 +272,11 @@ void LibretroPadHandler::process()
         else
         {
             binding.pad->m_port_status &= ~CELL_PAD_STATUS_CONNECTED;
-            if ((s_process_counter % 300) == 1)
-                libretro_pad_log.notice("  binding[%zu] - disconnected (skipping)", i);
             continue;
         }
 
         // Get button values from libretro input
         auto button_values = get_button_values(binding.device);
-
-        // Debug: Log button values periodically or when any button pressed
-        bool any_button = false;
-        for (const auto& [key, val] : button_values)
-        {
-            if (val > 0 && key < 16) any_button = true;
-        }
-        if ((s_process_counter % 300) == 1 || any_button)
-        {
-            libretro_pad_log.notice("  binding[%zu] port=%u buttons: B=%u Y=%u SEL=%u STA=%u UP=%u DN=%u LT=%u RT=%u A=%u X=%u L1=%u R1=%u L2=%u R2=%u L3=%u R3=%u",
-                i, binding.device->player_id,
-                button_values[static_cast<u64>(LibretroButton::B)],
-                button_values[static_cast<u64>(LibretroButton::Y)],
-                button_values[static_cast<u64>(LibretroButton::Select)],
-                button_values[static_cast<u64>(LibretroButton::Start)],
-                button_values[static_cast<u64>(LibretroButton::Up)],
-                button_values[static_cast<u64>(LibretroButton::Down)],
-                button_values[static_cast<u64>(LibretroButton::Left)],
-                button_values[static_cast<u64>(LibretroButton::Right)],
-                button_values[static_cast<u64>(LibretroButton::A)],
-                button_values[static_cast<u64>(LibretroButton::X)],
-                button_values[static_cast<u64>(LibretroButton::L1)],
-                button_values[static_cast<u64>(LibretroButton::R1)],
-                button_values[static_cast<u64>(LibretroButton::L2)],
-                button_values[static_cast<u64>(LibretroButton::R2)],
-                button_values[static_cast<u64>(LibretroButton::L3)],
-                button_values[static_cast<u64>(LibretroButton::R3)]);
-        }
 
         // Update pad button states in m_buttons vector
         for (auto& button : binding.pad->m_buttons)
@@ -369,20 +319,6 @@ void LibretroPadHandler::process()
 
             button.m_value = value;
             button.m_pressed = value > 0;
-
-            // Debug: Log when button state changes to pressed
-            if (value > 0 && (s_process_counter % 60) == 0)
-            {
-                libretro_pad_log.notice("    Button offset=%u keycode=0x%x value=%u pressed=%d",
-                    button.m_offset, button.m_outKeyCode, value, button.m_pressed ? 1 : 0);
-            }
-        }
-
-        // Debug: Log pad button count
-        if ((s_process_counter % 300) == 1)
-        {
-            libretro_pad_log.notice("  binding[%zu] - pad has %zu buttons, %zu sticks",
-                i, binding.pad->m_buttons.size(), binding.pad->m_sticks.size());
         }
 
         // Update analog sticks

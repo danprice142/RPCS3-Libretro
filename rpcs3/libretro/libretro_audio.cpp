@@ -7,8 +7,6 @@
 #include <cstring>
 #include <chrono>
 
-LOG_CHANNEL(libretro_audio_log, "LibretroAudio");
-
 static LibretroAudioBackend* s_audio_backend = nullptr;
 
 LibretroAudioBackend* get_libretro_audio_backend()
@@ -47,7 +45,6 @@ void libretro_audio_process(retro_audio_sample_batch_t audio_batch_cb)
 LibretroAudioBackend::LibretroAudioBackend()
 {
     s_audio_backend = this;
-    libretro_audio_log.notice("LibretroAudioBackend created");
 }
 
 LibretroAudioBackend::~LibretroAudioBackend()
@@ -55,7 +52,6 @@ LibretroAudioBackend::~LibretroAudioBackend()
     Close();
     if (s_audio_backend == this)
         s_audio_backend = nullptr;
-    libretro_audio_log.notice("LibretroAudioBackend destroyed");
 }
 
 bool LibretroAudioBackend::Open(std::string_view dev_id, AudioFreq freq, AudioSampleSize sample_size, AudioChannelCnt ch_cnt, audio_channel_layout layout)
@@ -81,8 +77,6 @@ bool LibretroAudioBackend::Open(std::string_view dev_id, AudioFreq freq, AudioSa
     m_ring_size = 0;
 
     m_initialized = true;
-    libretro_audio_log.notice("LibretroAudioBackend::Open() freq=%u ch=%u sample_size=%u ring_buffer_bytes=%zu convert_to_s16=%d",
-        static_cast<u32>(freq), static_cast<u32>(ch_cnt), get_sample_size(), m_ring_buffer_bytes.size(), get_convert_to_s16() ? 1 : 0);
     return true;
 }
 
@@ -96,7 +90,6 @@ void LibretroAudioBackend::Close()
     m_ring_read_pos = 0;
     m_ring_write_pos = 0;
     m_ring_size = 0;
-    libretro_audio_log.notice("LibretroAudioBackend::Close()");
 }
 
 void LibretroAudioBackend::SetWriteCallback(std::function<u32(u32, void*)> cb)
@@ -135,8 +128,9 @@ size_t LibretroAudioBackend::GetSamples(int16_t* buffer, size_t max_frames)
         return 0;
 
     // Use timed lock to avoid skipping frames but also avoid deadlock
+    // 2ms timeout is long enough to avoid most contention but short enough to not block retro_run
     std::unique_lock lock(m_mutex, std::defer_lock);
-    if (!lock.try_lock_for(std::chrono::microseconds(100)))
+    if (!lock.try_lock_for(std::chrono::milliseconds(2)))
         return 0;
 
     const u32 sample_size = get_sample_size();  // 4 for float, 2 for s16

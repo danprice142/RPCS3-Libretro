@@ -37,6 +37,7 @@
 #include "libretro_video.h"
 #include "libretro_firmware.h"
 #include "libretro_pad_handler.h"
+#include "libretro_vfs.h"
 
 #include <clocale>
 #include <chrono>
@@ -52,7 +53,6 @@
 #include <Windows.h>
 #endif
 
-LOG_CHANNEL(libretro_log, "LIBRETRO");
 
 // Libretro callbacks
 static retro_environment_t environ_cb = nullptr;
@@ -61,7 +61,7 @@ static retro_audio_sample_t audio_cb = nullptr;
 static retro_audio_sample_batch_t audio_batch_cb = nullptr;
 static retro_input_poll_t input_poll_cb = nullptr;
 static retro_input_state_t input_state_cb = nullptr;
-static retro_log_printf_t log_cb = nullptr;
+retro_log_printf_t log_cb = nullptr;
 
 // Hardware render callback for OpenGL
 static retro_hw_render_callback hw_render;
@@ -92,15 +92,6 @@ static std::thread s_pause_watchdog_thread;
 // Thread synchronization
 static std::mutex emu_mutex;
 static std::atomic<bool> frame_ready{false};
-
-#ifndef RPCS3_LIBRETRO_CORE_TRACE
-#define RPCS3_LIBRETRO_CORE_TRACE 1
-#endif
-
-static inline unsigned long long lr_core_tid_hash()
-{
-    return static_cast<unsigned long long>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-}
 
 static inline long long lr_now_us()
 {
@@ -161,8 +152,6 @@ static void start_pause_watchdog()
                 {
                     Emu.Pause(false, false);
                     s_paused_by_watchdog.store(true);
-                    if (log_cb)
-                        log_cb(RETRO_LOG_INFO, "[PAUSE] Watchdog pausing RPCS3 (gap=%lldus)\n", gap_us);
                 }
             }
             else if (gap_us < resume_threshold_us)
@@ -171,8 +160,6 @@ static void start_pause_watchdog()
                 {
                     Emu.Resume();
                     s_paused_by_watchdog.store(false);
-                    if (log_cb)
-                        log_cb(RETRO_LOG_INFO, "[PAUSE] Watchdog resuming RPCS3 (gap=%lldus)\n", gap_us);
                 }
             }
 
@@ -191,9 +178,6 @@ static void libretro_show_message(const char* msg, unsigned frames = 180)
     rm.msg = msg;
     rm.frames = frames;
     environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &rm);
-
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "[MSG] %s\n", msg);
 }
 
 // Check if a file path has a PKG extension
@@ -212,8 +196,6 @@ static bool is_pkg_file(const std::string& path)
 // Install a PKG file and return the path to the installed EBOOT.BIN
 static std::string install_pkg_file(const std::string& pkg_path)
 {
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Installing PKG: %s\n", pkg_path.c_str());
 
     libretro_show_message("Installing PKG file...", 300);
 
@@ -222,19 +204,14 @@ static std::string install_pkg_file(const std::string& pkg_path)
     if (!content_dir.empty())
     {
         install_base = content_dir + "/";
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Installing to content directory: %s\n", install_base.c_str());
     }
     else if (!system_dir.empty())
     {
         install_base = system_dir + "/rpcs3/dev_hdd0/game/";
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Installing to system directory: %s\n", install_base.c_str());
     }
     else
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "No valid install directory available\n");
+
         libretro_show_message("PKG installation failed: No install directory", 300);
         return "";
     }
@@ -242,8 +219,6 @@ static std::string install_pkg_file(const std::string& pkg_path)
     // Create install directory
     if (!fs::create_path(install_base))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "Failed to create install directory: %s\n", install_base.c_str());
         libretro_show_message("PKG installation failed: Cannot create directory", 300);
         return "";
     }
@@ -255,8 +230,6 @@ static std::string install_pkg_file(const std::string& pkg_path)
     // Validate the reader
     if (!readers.front().is_valid())
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "Invalid PKG file: %s\n", pkg_path.c_str());
         libretro_show_message("PKG installation failed: Invalid PKG file", 300);
         return "";
     }
@@ -265,8 +238,6 @@ static std::string install_pkg_file(const std::string& pkg_path)
     const auto& header = readers.front().get_header();
     std::string title_id(header.title_id, strnlen(header.title_id, sizeof(header.title_id)));
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "PKG Title ID: %s, Size: %llu bytes\n", title_id.c_str(), static_cast<unsigned long long>(header.pkg_size));
 
     std::deque<std::string> bootable_paths;
 
@@ -304,8 +275,7 @@ static std::string install_pkg_file(const std::string& pkg_path)
 
     if (!extraction_success)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "PKG extraction failed\n");
+
         libretro_show_message("PKG installation failed: Extraction error", 300);
         return "";
     }
@@ -315,8 +285,6 @@ static std::string install_pkg_file(const std::string& pkg_path)
     if (!bootable_paths.empty())
     {
         eboot_path = bootable_paths.front();
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "PKG installed successfully. Bootable: %s\n", eboot_path.c_str());
     }
     else
     {
@@ -331,8 +299,6 @@ static std::string install_pkg_file(const std::string& pkg_path)
             if (fs::is_file(path))
             {
                 eboot_path = path;
-                if (log_cb)
-                    log_cb(RETRO_LOG_INFO, "Found EBOOT.BIN at: %s\n", eboot_path.c_str());
                 break;
             }
         }
@@ -340,8 +306,6 @@ static std::string install_pkg_file(const std::string& pkg_path)
 
     if (eboot_path.empty())
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_WARN, "PKG installed but no bootable EBOOT.BIN found (may be DLC or update)\n");
         libretro_show_message("PKG installed (no bootable content - may be DLC)", 300);
     }
     else
@@ -543,18 +507,9 @@ static void libretro_apply_core_options()
     // Avoid additional CPU-throttling heuristics
     g_cfg.core.max_cpu_preempt_count_per_frame.set(0);
 
-    if (log_cb)
-    {
-        log_cb(RETRO_LOG_INFO, "Applied core options: ppu=%s spu=%s res_scale=%s frame_limit=%s\n",
-            ppu_decoder.c_str(), spu_decoder.c_str(), res_scale.c_str(), limit.c_str());
-    }
 }
 
-#if RPCS3_LIBRETRO_CORE_TRACE
-#define LRCORE_LOG(level, fmt, ...) do { if (log_cb) log_cb(level, "[LRCORE][tid=%llx] " fmt "\n", lr_core_tid_hash() __VA_OPT__(,) __VA_ARGS__); } while (0)
-#else
-#define LRCORE_LOG(...) do { } while (0)
-#endif
+
 
 // Forward declarations
 static void init_emu_callbacks();
@@ -648,12 +603,12 @@ static LONG CALLBACK lrcore_vectored_exception_handler(PEXCEPTION_POINTERS info)
         return EXCEPTION_CONTINUE_SEARCH;
     }
     const void* address = info->ExceptionRecord->ExceptionAddress;
-    LRCORE_LOG(RETRO_LOG_ERROR, "FATAL EXCEPTION code=0x%08lx address=%p", static_cast<unsigned long>(code), address);
+
     const auto stack = utils::get_backtrace_from_context(info->ContextRecord, 256);
     const auto lines = utils::get_backtrace_symbols(stack);
     for (usz i = 0; i < lines.size(); ++i)
     {
-        LRCORE_LOG(RETRO_LOG_ERROR, "Crash frame %u: %s", static_cast<unsigned>(i), lines[i].c_str());
+
     }
     const std::string header = fmt::format("RPCS3 libretro crash: code=0x%08lx address=%p", static_cast<unsigned long>(code), address);
     lrcore_write_crash_report(header, lines);
@@ -667,12 +622,12 @@ static void lrcore_install_crash_handler()
         return;
     }
     g_lrcore_vectored_handler = AddVectoredExceptionHandler(1, lrcore_vectored_exception_handler);
-    LRCORE_LOG(RETRO_LOG_INFO, "Installed vectored exception handler: %p", g_lrcore_vectored_handler);
+
 }
 
 static void lrcore_uninstall_crash_handler()
 {
-    LRCORE_LOG(RETRO_LOG_INFO, "Uninstalling vectored exception handler: %p", g_lrcore_vectored_handler);
+
     if (g_lrcore_vectored_handler)
     {
         RemoveVectoredExceptionHandler(g_lrcore_vectored_handler);
@@ -685,34 +640,9 @@ namespace
 {
     struct libretro_log_listener : public logs::listener
     {
-        void log(u64 /*stamp*/, const logs::message& msg, std::string_view prefix, std::string_view text) override
+        void log(u64 /*stamp*/, const logs::message& /*msg*/, std::string_view /*prefix*/, std::string_view /*text*/) override
         {
-            if (!log_cb)
-                return;
-
-            retro_log_level retro_level = RETRO_LOG_INFO;
-            logs::level sev = static_cast<logs::level>(msg);
-            switch (sev)
-            {
-            case logs::level::always:
-            case logs::level::fatal:
-            case logs::level::error:
-                retro_level = RETRO_LOG_ERROR;
-                break;
-            case logs::level::todo:
-            case logs::level::success:
-            case logs::level::warning:
-                retro_level = RETRO_LOG_WARN;
-                break;
-            case logs::level::notice:
-            case logs::level::trace:
-                retro_level = RETRO_LOG_INFO;
-                break;
-            }
-
-            log_cb(retro_level, "[%.*s] %.*s\n",
-                static_cast<int>(prefix.size()), prefix.data(),
-                static_cast<int>(text.size()), text.data());
+            // Logging disabled
         }
     };
 
@@ -744,6 +674,22 @@ void retro_set_environment(retro_environment_t cb)
     if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging))
     {
         log_cb = logging.log;
+    }
+
+    // Request VFS interface (API v3 for directory operations)
+    struct retro_vfs_interface_info vfs_info;
+    vfs_info.required_interface_version = 3;
+    vfs_info.iface = nullptr;
+
+    if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_info) && vfs_info.iface)
+    {
+        libretro_vfs::set_vfs_interface(vfs_info.iface);
+
+    }
+    else
+    {
+        // Only log on first call - retro_set_environment may be called multiple times
+
     }
 
     // Core options using v2 API for categories
@@ -1320,24 +1266,26 @@ void retro_set_environment(retro_environment_t cb)
     if (cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, &bitmasks_supported))
     {
         libretro_input_set_bitmask_supported(bitmasks_supported);
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Input bitmasks supported: %d\n", bitmasks_supported ? 1 : 0);
+
     }
 
     // Initialize sensor interface for gyro/accelerometer support
     if (libretro_input_init_sensors(cb))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Sensor interface initialized (gyro/accelerometer available)\n");
     }
     else
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Sensor interface not available (no gyro/accelerometer support)\n");
     }
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Input descriptors and controller info set up\n");
+
+
+    // Set minimum audio latency to reduce crackling (per libretro docs recommendation)
+    // 64ms = ~4 frames at 60fps, good for emulators with variable frame timing
+    unsigned audio_latency_ms = 64;
+    if (cb(RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY, &audio_latency_ms))
+    {
+
+    }
 
     // Apply defaults for core options early
     libretro_apply_core_options();
@@ -1378,8 +1326,11 @@ void retro_get_system_info(struct retro_system_info* info)
     info->library_name = "RPCS3";
     info->library_version = "0.0.1";
     info->valid_extensions = "bin|self|elf|pkg|iso";
-    info->need_fullpath = true;
-    info->block_extract = true;
+    // VFS support: Allow both fullpath (native) and VFS-based loading
+    // RPCS3 still works best with full paths for directory structures,
+    // but VFS enables loading from archives and virtual filesystems
+    info->need_fullpath = false;
+    info->block_extract = false;
 }
 
 void retro_get_system_av_info(struct retro_system_av_info* info)
@@ -1401,7 +1352,7 @@ void retro_init(void)
     if (core_initialized)
         return;
 
-    LRCORE_LOG(RETRO_LOG_INFO, "retro_init enter core_initialized=%d", core_initialized ? 1 : 0);
+
 
 #ifdef _WIN32
     lrcore_install_crash_handler();
@@ -1435,8 +1386,6 @@ void retro_init(void)
         {
             const std::string log_path = save_dir + "/rpcs3_detailed.log";
             s_file_logger = logs::make_file_listener(log_path, 100 * 1024 * 1024); // 100MB max
-            if (log_cb)
-                log_cb(RETRO_LOG_INFO, "RPCS3 detailed logging enabled: %s\n", log_path.c_str());
         }
     }
 
@@ -1456,21 +1405,15 @@ void retro_init(void)
         g_cfg_vfs.save();
     }
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "RPCS3 emulator directory: %s\n", emu_dir.c_str());
 
     if (!libretro_is_firmware_installed())
     {
         const std::string pup_path = find_firmware_pup();
         if (pup_path.empty())
         {
-            if (log_cb)
-                log_cb(RETRO_LOG_ERROR, "PS3 firmware not installed. Place PS3UPDAT.PUP in: %s\n", (system_dir + "/rpcs3/").c_str());
         }
         else
         {
-            if (log_cb)
-                log_cb(RETRO_LOG_INFO, "Installing PS3 firmware from: %s\n", pup_path.c_str());
 
             if (!g_fxo->is_init())
             {
@@ -1482,33 +1425,25 @@ void retro_init(void)
             {
                 ok = libretro_install_firmware(pup_path, [](int cur, int total)
                 {
-                    if (log_cb)
-                        log_cb(RETRO_LOG_INFO, "Firmware install progress: %d/%d\n", cur, total);
+
                 });
             }
             catch (const std::exception& e)
             {
-                if (log_cb)
-                {
-                    log_cb(RETRO_LOG_ERROR, "Firmware installation threw exception: %s\n", e.what());
-                }
+                (void)e;
                 ok = false;
             }
             catch (...)
             {
-                if (log_cb)
-                    log_cb(RETRO_LOG_ERROR, "Firmware installation threw unknown exception\n");
+
                 ok = false;
             }
 
-            if (log_cb)
-                log_cb(ok ? RETRO_LOG_INFO : RETRO_LOG_ERROR, ok ? "Firmware installation finished\n" : "Firmware installation failed\n");
+
         }
     }
     else
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "PS3 firmware already installed (version: %s)\n", libretro_get_firmware_version().c_str());
     }
 
     // Initialize the emulator
@@ -1516,7 +1451,7 @@ void retro_init(void)
     Emu.SetUsr("00000001");
     Emu.Init();
 
-    LRCORE_LOG(RETRO_LOG_INFO, "Emu.Init done IsRunning=%d IsReady=%d IsStopped=%d", Emu.IsRunning() ? 1 : 0, Emu.IsReady() ? 1 : 0, Emu.IsStopped() ? 1 : 0);
+
 
     // Set up callbacks
     init_emu_callbacks();
@@ -1524,16 +1459,14 @@ void retro_init(void)
     // Set up hardware rendering (OpenGL context)
     if (!setup_hw_render())
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_WARN, "Hardware rendering not available, will use software rendering\n");
+
     }
 
     core_initialized = true;
 
-    LRCORE_LOG(RETRO_LOG_INFO, "retro_init done core_initialized=%d", core_initialized ? 1 : 0);
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "RPCS3 libretro core initialized\n");
+
+
 }
 
 void retro_deinit(void)
@@ -1543,7 +1476,7 @@ void retro_deinit(void)
 
     stop_pause_watchdog();
 
-    LRCORE_LOG(RETRO_LOG_INFO, "retro_deinit enter game_loaded=%d pending_game_boot=%d", game_loaded ? 1 : 0, pending_game_boot ? 1 : 0);
+
 
     if (game_loaded)
     {
@@ -1554,32 +1487,31 @@ void retro_deinit(void)
     core_initialized = false;
     game_loaded = false;
 
-    LRCORE_LOG(RETRO_LOG_INFO, "retro_deinit done core_initialized=%d game_loaded=%d", core_initialized ? 1 : 0, game_loaded ? 1 : 0);
+
 
 #ifdef _WIN32
     lrcore_uninstall_crash_handler();
 #endif
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "RPCS3 libretro core deinitialized\n");
+
 }
 
 static bool do_boot_game();
 
 static void context_reset()
 {
-    LRCORE_LOG(RETRO_LOG_INFO, "context_reset enter pending_game_boot=%d game_loaded=%d", pending_game_boot ? 1 : 0, game_loaded ? 1 : 0);
-    LRCORE_LOG(RETRO_LOG_INFO, "context_reset hw_render.get_current_framebuffer=%p hw_render.get_proc_address=%p", reinterpret_cast<void*>(hw_render.get_current_framebuffer), reinterpret_cast<void*>(hw_render.get_proc_address));
+
+
 
     // Initialize libretro video with the new context
     libretro_video_init(hw_render.get_current_framebuffer, hw_render.get_proc_address);
 
-    LRCORE_LOG(RETRO_LOG_INFO, "context_reset after libretro_video_init");
+
 
     // Now that the GL context is ready, boot the game if pending
     if (pending_game_boot && !game_loaded)
     {
-        LRCORE_LOG(RETRO_LOG_INFO, "context_reset booting pending game");
+
         if (do_boot_game())
         {
             game_loaded = true;
@@ -1588,16 +1520,16 @@ static void context_reset()
         pending_game_boot = false;
     }
 
-    LRCORE_LOG(RETRO_LOG_INFO, "context_reset exit pending_game_boot=%d game_loaded=%d", pending_game_boot ? 1 : 0, game_loaded ? 1 : 0);
+
 }
 
 static void context_destroy()
 {
-    LRCORE_LOG(RETRO_LOG_INFO, "context_destroy enter");
+
 
     libretro_video_deinit();
 
-    LRCORE_LOG(RETRO_LOG_INFO, "context_destroy exit");
+
 }
 
 static bool setup_hw_render()
@@ -1617,33 +1549,27 @@ static bool setup_hw_render()
     hw_render.cache_context = true;
     hw_render.debug_context = false;
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Requesting OpenGL Core context (minimum 4.3)\n");
 
     if (environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "OpenGL Core 4.3+ context request accepted\n");
+
         return true;
     }
 
     // Fallback: try OpenGL Core 3.3 (may lack some features but could work on older systems)
-    if (log_cb)
-        log_cb(RETRO_LOG_WARN, "OpenGL Core 4.3 not available, trying 3.3...\n");
+
 
     hw_render.version_major = 3;
     hw_render.version_minor = 3;
 
     if (environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "OpenGL Core 3.3+ context request accepted\n");
+
         return true;
     }
 
     // Final fallback: try legacy OpenGL compatibility context
-    if (log_cb)
-        log_cb(RETRO_LOG_WARN, "OpenGL Core not available, trying compatibility profile...\n");
+
 
     hw_render.context_type = RETRO_HW_CONTEXT_OPENGL;
     hw_render.version_major = 3;
@@ -1651,25 +1577,21 @@ static bool setup_hw_render()
 
     if (environ_cb(RETRO_ENVIRONMENT_SET_HW_RENDER, &hw_render))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "OpenGL compatibility context request accepted\n");
+
         return true;
     }
 
-    if (log_cb)
-        log_cb(RETRO_LOG_ERROR, "Failed to set HW render callback - no suitable OpenGL context available\n");
+
     return false;
 }
 
 bool retro_load_game(const struct retro_game_info* game)
 {
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "retro_load_game called\n");
+
 
     if (!game || !game->path)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "No game info or path provided\n");
+
         return false;
     }
 
@@ -1678,59 +1600,47 @@ bool retro_load_game(const struct retro_game_info* game)
     if (environ_cb(RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY, &content_dir_ptr) && content_dir_ptr)
     {
         content_dir = content_dir_ptr;
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Content directory: %s\n", content_dir.c_str());
     }
     else
     {
         content_dir.clear();
-        if (log_cb)
-            log_cb(RETRO_LOG_WARN, "Could not get content directory from frontend\n");
+
     }
 
     // Check if frontend supports frame duping (passing NULL to video_cb to reuse last frame)
     bool can_dupe = false;
     if (environ_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &can_dupe) && can_dupe)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Frame duping supported by frontend\n");
+
     }
     else
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_WARN, "Frame duping NOT supported by frontend - may affect performance\n");
+
     }
 
     game_path = game->path;
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Game path: %s\n", game_path.c_str());
 
     // Check if this is a PKG file - install it and boot the installed game
     if (is_pkg_file(game_path))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Detected PKG file, attempting installation...\n");
+
 
         std::string installed_eboot = install_pkg_file(game_path);
         if (installed_eboot.empty())
         {
-            if (log_cb)
-                log_cb(RETRO_LOG_ERROR, "PKG installation failed or no bootable content\n");
+
             return false;
         }
 
         // Update game_path to the installed EBOOT.BIN for booting
         game_path = installed_eboot;
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "PKG installed, booting: %s\n", game_path.c_str());
     }
     // Check if this is an ISO file - RPCS3 does NOT support raw ISOs
     else if (game_path.size() >= 4 &&
              (game_path.substr(game_path.size() - 4) == ".iso" ||
               game_path.substr(game_path.size() - 4) == ".ISO"))
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "RPCS3 does not support ISO files. Please extract the disc image first.\n");
+
         return false;
     }
     // Check if EBOOT.BIN was passed directly - need to find parent game folder
@@ -1748,28 +1658,21 @@ bool retro_load_game(const struct retro_game_info* game)
 
         if (is_eboot)
         {
-            if (log_cb)
-                log_cb(RETRO_LOG_INFO, "Detected direct EBOOT.BIN path, searching for game folder...\n");
+
 
             std::string game_folder;
             std::string current_path = fs::get_parent_dir(game_path);
 
-            if (log_cb)
-                log_cb(RETRO_LOG_DEBUG, "Starting search from: %s\n", current_path.c_str());
 
             // Check up to 4 levels up for PS3_GAME or valid game structure
             for (int i = 0; i < 4 && !current_path.empty(); i++)
             {
-                if (log_cb)
-                    log_cb(RETRO_LOG_DEBUG, "Checking directory level %d: %s\n", i, current_path.c_str());
 
                 // Check if this directory contains PS3_GAME subdirectory (disc game structure)
                 std::string ps3_game_path = current_path + "/PS3_GAME";
                 if (fs::is_dir(ps3_game_path))
                 {
                     game_folder = current_path;
-                    if (log_cb)
-                        log_cb(RETRO_LOG_INFO, "Found game folder (PS3_GAME structure): %s\n", game_folder.c_str());
                     break;
                 }
 
@@ -1792,8 +1695,6 @@ bool retro_load_game(const struct retro_game_info* game)
                         if (ps3_game_name == "PS3_GAME")
                         {
                             game_folder = fs::get_parent_dir(ps3_game);
-                            if (log_cb)
-                                log_cb(RETRO_LOG_INFO, "Found game folder (USRDIR->PS3_GAME parent): %s\n", game_folder.c_str());
                             break;
                         }
                     }
@@ -1804,8 +1705,6 @@ bool retro_load_game(const struct retro_game_info* game)
                 if (fs::is_file(param_sfo))
                 {
                     game_folder = current_path;
-                    if (log_cb)
-                        log_cb(RETRO_LOG_INFO, "Found game folder (PARAM.SFO present): %s\n", game_folder.c_str());
                     break;
                 }
 
@@ -1814,32 +1713,25 @@ bool retro_load_game(const struct retro_game_info* game)
 
             if (game_folder.empty())
             {
-                if (log_cb)
-                    log_cb(RETRO_LOG_ERROR, "Could not find game folder structure from EBOOT.BIN path. "
-                           "Please load the game folder instead of EBOOT.BIN directly.\n");
+
                 return false;
             }
 
             game_path = game_folder;
-            if (log_cb)
-                log_cb(RETRO_LOG_INFO, "Redirected to game folder: %s\n", game_path.c_str());
         }
     }
 
     // Use OpenGL renderer - game boot will be deferred until context_reset() when GL context is ready
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Using OpenGL renderer\n");
+
     g_cfg.video.renderer.set(video_renderer::opengl);
 
     // Configure PPU decoder - use LLVM for best performance
     g_cfg.core.ppu_decoder.set(ppu_decoder_type::llvm);
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "PPU decoder set to LLVM recompiler\n");
+
 
     // Configure SPU decoder - use LLVM for best performance
     g_cfg.core.spu_decoder.set(spu_decoder_type::llvm);
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "SPU decoder set to LLVM recompiler\n");
+
 
     // Performance optimizations
     g_cfg.core.spu_loop_detection.set(true);  // Faster SPU loops
@@ -1863,14 +1755,11 @@ bool retro_load_game(const struct retro_game_info* game)
     g_cfg.audio.desired_buffer_duration.set(100);  // 100ms buffer for smoother audio in libretro
     g_cfg.audio.enable_time_stretching.set(false);  // Disable time stretching (RetroArch handles sync)
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Applied performance optimizations (LLVM threads=%u, shader_threads=auto, async_shaders=true, relaxed_zcull=true, audio_buffer=100ms)\n", std::thread::hardware_concurrency());
 
     // Configure audio - set explicit stereo layout to avoid "Unsupported layout 0" error
     // (audio_channel_layout::automatic = 0 is not handled by default_layout_channel_count)
     g_cfg.audio.channel_layout.set(audio_channel_layout::stereo);
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Audio channel layout set to stereo\n");
+
 
     // Disable RPCS3's native UI/overlay system completely for libretro.
     // This prevents the overlay manager from being created, which would try to load
@@ -1883,21 +1772,17 @@ bool retro_load_game(const struct retro_game_info* game)
     g_cfg.misc.show_pressure_intensity_toggle_hint.set(false);
     g_cfg.misc.show_trophy_popups.set(false);
     g_cfg.misc.show_rpcn_popups.set(false);
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Disabled RPCS3 native UI for libretro\n");
+
 
     // Save config so BootGame() loads the correct settings when it reloads config.yml
     // Note: RPCS3 loads config from fs::get_config_dir(true) which adds "config/" subdirectory
     const std::string config_path = fs::get_config_dir(true) + "config.yml";
     g_cfg.save(config_path);
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Saved libretro config to: %s\n", config_path.c_str());
 
     // For null renderer, boot immediately. For OpenGL, defer until context_reset()
     if (g_cfg.video.renderer.get() == video_renderer::null)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Null renderer - booting game immediately\n");
+
         if (!do_boot_game())
         {
             return false;
@@ -1909,8 +1794,7 @@ bool retro_load_game(const struct retro_game_info* game)
     {
         // Defer game boot until context_reset() when GL context is ready
         pending_game_boot = true;
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Game boot deferred until GL context is ready\n");
+
     }
 
     return true;
@@ -1919,8 +1803,7 @@ bool retro_load_game(const struct retro_game_info* game)
 // Actually boot the game - called from context_reset() when GL context is ready
 static bool do_boot_game()
 {
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Attempting to boot game...\n");
+
 
     // Ensure /dev_flash points to RetroArch system/rpcs3/ so the installed firmware is visible during boot
     if (!system_dir.empty())
@@ -1953,8 +1836,6 @@ static bool do_boot_game()
             }
         }
 
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Initialized pad_thread with LibretroPadHandler (%zu pads bound)\n", pads.size());
     }
 
     game_boot_result result = game_boot_result::generic_error;
@@ -1965,14 +1846,11 @@ static bool do_boot_game()
     }
     catch (const std::exception& e)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "Exception during game boot: %s\n", e.what());
         return false;
     }
     catch (...)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "Unknown exception during game boot\n");
+
         return false;
     }
 
@@ -1999,21 +1877,9 @@ static bool do_boot_game()
         case game_boot_result::currently_restricted: error_str = "currently_restricted"; break;
         default: break;
         }
-        if (log_cb)
-            log_cb(RETRO_LOG_ERROR, "Failed to boot game: %s (error: %s)\n", game_path.c_str(), error_str);
         return false;
     }
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Game loaded: %s\n", game_path.c_str());
-
-    // Log initial state after boot
-    if (log_cb)
-    {
-        system_state state = Emu.GetStatus();
-        log_cb(RETRO_LOG_INFO, "Emulator state after boot: state=%d (IsRunning=%d, IsReady=%d, IsStopped=%d)\n",
-            static_cast<int>(state), Emu.IsRunning() ? 1 : 0, Emu.IsReady() ? 1 : 0, Emu.IsStopped() ? 1 : 0);
-    }
 
     // Wait for emulator to transition out of loading/starting states
     // Poll for up to 30 seconds
@@ -2030,59 +1896,41 @@ static bool do_boot_game()
         if (state == system_state::running || state == system_state::paused ||
             state == system_state::ready || state == system_state::frozen)
         {
-            if (log_cb)
-                log_cb(RETRO_LOG_INFO, "Emulator reached usable state=%d after %dms\n", static_cast<int>(state), waited_ms);
             break;
         }
 
         // If stopped, boot failed
         if (state == system_state::stopped)
         {
-            if (log_cb)
-                log_cb(RETRO_LOG_ERROR, "Emulator stopped unexpectedly\n");
+
             break;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
         waited_ms += poll_interval_ms;
 
-        if (log_cb && (waited_ms % 1000 == 0))
-        {
-            log_cb(RETRO_LOG_INFO, "Waiting for emulator... %dms state=%d\n", waited_ms, static_cast<int>(state));
-        }
     }
 
     system_state final_state = Emu.GetStatus();
-    if (log_cb)
-    {
-        log_cb(RETRO_LOG_INFO, "Emulator state after wait: state=%d (waited %dms)\n",
-            static_cast<int>(final_state), waited_ms);
-    }
 
     // If ready but not running, start it
     if (final_state == system_state::ready)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Starting emulation manually...\n");
+
         Emu.Run(true);
     }
     // If paused, resume
     else if (final_state == system_state::paused || final_state == system_state::frozen)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Resuming paused emulation...\n");
+
         Emu.Resume();
     }
     // If still in starting state after timeout, force transition to running
     else if (final_state == system_state::starting)
     {
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Emulator stuck in starting state, calling FinalizeRunRequest()...\n");
         Emu.FinalizeRunRequest();
     }
 
-    if (log_cb)
-        log_cb(RETRO_LOG_INFO, "Final state: %d (IsRunning=%d)\n", static_cast<int>(Emu.GetStatus()), Emu.IsRunning() ? 1 : 0);
 
     // Start pause watchdog once the emulator is running so RetroArch pause fully pauses emulation.
     // (This is safe to call multiple times.)
@@ -2101,7 +1949,7 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 
 void retro_unload_game(void)
 {
-    LRCORE_LOG(RETRO_LOG_INFO, "retro_unload_game enter game_loaded=%d", game_loaded ? 1 : 0);
+
     stop_pause_watchdog();
     if (game_loaded)
     {
@@ -2109,7 +1957,7 @@ void retro_unload_game(void)
         game_loaded = false;
         game_path.clear();
     }
-    LRCORE_LOG(RETRO_LOG_INFO, "retro_unload_game exit game_loaded=%d", game_loaded ? 1 : 0);
+
 }
 
 void retro_run(void)
@@ -2123,12 +1971,6 @@ void retro_run(void)
     // Update watchdog timestamp.
     s_last_retro_run_us.store(lr_now_us());
 
-    if (log_cb && (s_run_counter <= 300 || (s_run_counter % 60u) == 0u))
-    {
-        const uintptr_t fbo = libretro_get_current_framebuffer();
-        LRCORE_LOG(RETRO_LOG_INFO, "retro_run #%llu Emu(IsRunning=%d IsReady=%d IsStopped=%d) video_cb=%p fbo=0x%llx", static_cast<unsigned long long>(s_run_counter), Emu.IsRunning() ? 1 : 0, Emu.IsReady() ? 1 : 0, Emu.IsStopped() ? 1 : 0, reinterpret_cast<void*>(video_cb), static_cast<unsigned long long>(fbo));
-    }
-
     // Check for variable updates
     bool updated = false;
     if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
@@ -2140,44 +1982,6 @@ void retro_run(void)
     input_poll_cb();
     libretro_input_poll(input_state_cb);
     libretro_input_poll_sensors();  // Poll gyro/accelerometer data
-
-    // Debug: Log input state periodically (all ports)
-    if (log_cb && (s_run_counter % 120u) == 0u)
-    {
-        for (unsigned port = 0; port < LIBRETRO_MAX_PADS; port++)
-        {
-            const auto& state = libretro_input_get_state(port);
-            bool any_pressed = false;
-            for (int i = 0; i <= 15; i++)
-            {
-                if (state.buttons[i])
-                    any_pressed = true;
-            }
-
-            if (any_pressed || state.analog[0] != 0 || state.analog[1] != 0 || state.analog[2] != 0 || state.analog[3] != 0)
-            {
-                log_cb(RETRO_LOG_INFO, "[INPUT][port=%u] B=%d Y=%d SEL=%d STA=%d UP=%d DN=%d LT=%d RT=%d A=%d X=%d L=%d R=%d L2=%d R2=%d L3=%d R3=%d LX=%d LY=%d RX=%d RY=%d\n",
-                    port,
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_B],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_Y],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_SELECT],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_START],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_UP],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_DOWN],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_LEFT],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_RIGHT],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_A],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_X],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_L],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_R],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_L2],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_R2],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_L3],
-                    state.buttons[RETRO_DEVICE_ID_JOYPAD_R3],
-                    state.analog[0], state.analog[1], state.analog[2], state.analog[3]);
-            }
-        }
-    }
 
     // Process pad handler to update RPCS3's pad states from libretro input
     if (g_libretro_pad_handler)
@@ -2207,39 +2011,19 @@ void retro_run(void)
     // Check if RSX has rendered a new frame since our last presentation
     const bool has_new_frame = libretro_has_new_frame();
 
-    if (log_cb && (s_run_counter <= 300 || (s_run_counter % 60u) == 0u))
-    {
-        LRCORE_LOG(RETRO_LOG_INFO, "retro_run #%llu has_new_frame=%d", static_cast<unsigned long long>(s_run_counter), has_new_frame ? 1 : 0);
-    }
-
     if (has_new_frame)
     {
         // New frame available - blit from RSX's shared texture to RetroArch's FBO, then present
         // CRITICAL: FBOs are NOT shared between GL contexts, so RSX renders to a shared texture,
         // and we blit that texture to RetroArch's actual FBO here on the main thread.
         libretro_blit_to_frontend();
-
-        if (log_cb && (s_run_counter <= 300 || (s_run_counter % 60u) == 0u))
-        {
-            LRCORE_LOG(RETRO_LOG_INFO, "retro_run #%llu video_cb(RETRO_HW_FRAME_BUFFER_VALID) - presenting new frame after blit", static_cast<unsigned long long>(s_run_counter));
-        }
         video_cb(RETRO_HW_FRAME_BUFFER_VALID, 1280, 720, 0);
         libretro_mark_frame_presented();
     }
     else
     {
         // No new frame - tell RetroArch to reuse the previous frame (frame duping)
-        // This is the correct behavior per libretro spec when no new frame is available
-        if (log_cb && (s_run_counter <= 300 || (s_run_counter % 60u) == 0u))
-        {
-            LRCORE_LOG(RETRO_LOG_INFO, "retro_run #%llu video_cb(NULL) - reusing previous frame", static_cast<unsigned long long>(s_run_counter));
-        }
         video_cb(NULL, 1280, 720, 0);
-    }
-
-    if (log_cb && (s_run_counter <= 300 || (s_run_counter % 60u) == 0u))
-    {
-        LRCORE_LOG(RETRO_LOG_INFO, "retro_run #%llu exit", static_cast<unsigned long long>(s_run_counter));
     }
 }
 
@@ -2395,8 +2179,7 @@ static void init_emu_callbacks()
             g_libretro_pad_handler->Init();
         }
 
-        if (log_cb)
-            log_cb(RETRO_LOG_INFO, "Libretro pad handler initialized\n");
+
     };
 
     callbacks.get_msg_dialog = []() -> std::shared_ptr<MsgDialogBase>
@@ -2451,3 +2234,4 @@ static void init_emu_callbacks()
 
     Emu.SetCallbacks(std::move(callbacks));
 }
+

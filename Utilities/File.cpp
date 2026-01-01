@@ -12,6 +12,11 @@
 #include "util/asm.hpp"
 #include "util/coro.hpp"
 
+// Libretro VFS integration
+#ifdef LIBRETRO_CORE
+#include "rpcs3/libretro/libretro_vfs.h"
+#endif
+
 using namespace std::literals::string_literals;
 
 #ifdef ANDROID
@@ -1597,6 +1602,28 @@ fs::file::file(const std::string& path, bs_t<open_mode> mode)
 
 		return;
 	}
+
+#ifdef LIBRETRO_CORE
+	// Try libretro VFS first for all file operations
+	if (libretro_vfs::is_vfs_available())
+	{
+		// Convert fs:: mode flags to VFS mode flags
+		unsigned int vfs_mode = 0;
+		if (mode & fs::read)   vfs_mode |= libretro_vfs::VFS_MODE_READ;
+		if (mode & fs::write)  vfs_mode |= libretro_vfs::VFS_MODE_WRITE;
+		if (mode & fs::append) vfs_mode |= libretro_vfs::VFS_MODE_APPEND;
+		if (mode & fs::create) vfs_mode |= libretro_vfs::VFS_MODE_CREATE;
+		if (mode & fs::trunc)  vfs_mode |= libretro_vfs::VFS_MODE_TRUNC;
+		if (mode & fs::excl)   vfs_mode |= libretro_vfs::VFS_MODE_EXCL;
+
+		if (auto vfs_file = libretro_vfs::create_vfs_file_base(path, vfs_mode))
+		{
+			m_file = std::move(vfs_file);
+			return;
+		}
+		// VFS failed, fall through to native I/O
+	}
+#endif
 
 #ifdef _WIN32
 	DWORD access = 0;
